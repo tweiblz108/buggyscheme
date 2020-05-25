@@ -440,7 +440,7 @@ function interpreter(roots: TreeNode[]) {
           const op = operandStack.pop() as TreeNode;
 
           if (op.type === "LAMBDA") {
-            const argsCount = (curr.bundle! as TreeNode).parent!.val - 1;
+            const argsCount = (curr.bundle as TreeNode).val - 1;
             const paramsCount = op.val;
 
             if (argsCount === paramsCount) {
@@ -472,7 +472,7 @@ function interpreter(roots: TreeNode[]) {
                 );
                 break;
               case Operators.OP_LAMBDA:
-                if (argsCount !== 2) throw new InterpreterError("lambda");
+                if (argsCount < 2) throw new InterpreterError("lambda");
 
                 const args = runtimeStack.splice(-argsCount);
                 operandStack.push(
