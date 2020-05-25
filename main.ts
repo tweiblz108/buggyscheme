@@ -40,35 +40,33 @@ class Token {
   }
 }
 enum Operators {
-  OP_CAR= "car",
-  OP_CDR= "cdr",
-  OP_CONS= "cons",
-  OP_COND= "cond",
-  OP_IF= "if",
-  OP_EQ= "eq",
-  OP_LAMBDA= "lambda",
-  OP_DEF= "def",
-  OP_SET= "set!",
-  OP_APPLY= "apply",
-  OP_LET= "let",
-  OP_BEGIN= "begin",
-  OP_IMPORT= "import",
-  OP_EXPORT= "export",
-  OP_TYPE= "type",
-  OP_EXIT= "exit",
-  OP_ADD= "+",
-  OP_SUB= "-",
-  OP_MUL= "*",
-  OP_DIV= "/",
-  OP_MOD= "%",
-  OP_GT= ">",
-  OP_LT= "<",
-  OP_AND= "and",
-  OP_OR= "or",
-  OP_NOT= "not",
-};
-
-const ops = Object.values(Operators)
+  OP_CAR = "car",
+  OP_CDR = "cdr",
+  OP_CONS = "cons",
+  OP_COND = "cond",
+  OP_IF = "if",
+  OP_EQ = "eq",
+  OP_LAMBDA = "lambda",
+  OP_DEF = "def",
+  OP_SET = "set!",
+  OP_APPLY = "apply",
+  OP_LET = "let",
+  OP_BEGIN = "begin",
+  OP_IMPORT = "import",
+  OP_EXPORT = "export",
+  OP_TYPE = "type",
+  OP_EXIT = "exit",
+  OP_ADD = "+",
+  OP_SUB = "-",
+  OP_MUL = "*",
+  OP_DIV = "/",
+  OP_MOD = "%",
+  OP_GT = ">",
+  OP_LT = "<",
+  OP_AND = "and",
+  OP_OR = "or",
+  OP_NOT = "not",
+}
 
 const Constants = [
   ":number",
@@ -86,10 +84,17 @@ const Constants = [
   "#args",
 ];
 
-type a = typeof Constants
+type a = typeof Constants;
 
 type NTypeContainer = "EXPR" | "LIST";
-type NTypeAtom = "SYMBOL" | "NUMBER" | "LAMBDA" | "BOOL" | "STRING" | "CHAR" | "TYPE";
+type NTypeAtom =
+  | "SYMBOL"
+  | "NUMBER"
+  | "LAMBDA"
+  | "BOOL"
+  | "STRING"
+  | "CHAR"
+  | "TYPE";
 type NTypeOperator = "OPERATOR";
 type NTypeConstant = "CONSTANT";
 type NTypeInternal = "UNKNOWN" | "EVAL" | "PRIMITIVE" | "RETURN";
@@ -106,7 +111,7 @@ class TreeNode {
   children: TreeNode[] = [];
   bundle?: TreeNode | Env;
 
-  constructor(public type: NType, public val: any = '') {}
+  constructor(public type: NType, public val: any = "") {}
 
   withToken(token: Token | undefined) {
     this.token = token;
@@ -114,7 +119,7 @@ class TreeNode {
     return this;
   }
 
-  withBundle(bundle: TreeNode) {
+  withBundle(bundle: TreeNode | Env) {
     this.bundle = bundle;
 
     return this;
@@ -124,6 +129,16 @@ class TreeNode {
     child.parent = this;
 
     this.children.push(child);
+
+    return this;
+  }
+
+  addChildren(children: TreeNode[]) {
+    for (const child of children) {
+      this.addChild(child);
+    }
+
+    return this;
   }
 
   isRoot() {
@@ -364,59 +379,53 @@ class AnalysisError extends Error {}
 
 function analysis(roots: TreeNode[]) {
   function _analysis(root) {
-    const stack: TreeNode[] = []
+    const stack: TreeNode[] = [];
 
-    stack.push(root)
+    stack.push(root);
 
-    while(stack.length > 0) {
-      const node = stack.pop() as TreeNode
+    while (stack.length > 0) {
+      const node = stack.pop() as TreeNode;
 
-      if (node.type === 'EXPR') {
-        node.val = node.children.length - 1 // argsCount
-
-        for (const child of node.children) {
-          stack.push(child)
-        }
-      } else if ( node.type === 'LIST') {
-        node.val = node.children.length
+      if (node.type === "EXPR" || node.type === "LIST") {
+        node.val = node.children.length;
 
         for (const child of node.children) {
-          stack.push(child)
+          stack.push(child);
         }
       } else {
-        const val = node.val as string
+        const val = node.val as string;
 
         if (Object.values(Constants).includes(val)) {
-          node.type = 'CONSTANT'
+          node.type = "CONSTANT";
         } else if (Object.values(Operators).includes(val as Operators)) {
-          node.type = 'OPERATOR'
+          node.type = "OPERATOR";
         } else if (REGEXP_NUMBER.test(val)) {
-          node.type = 'NUMBER'
-          node.val = parseFloat(val)
+          node.type = "NUMBER";
+          node.val = parseFloat(val);
         } else if (val.startsWith('"') && val.endsWith('"')) {
-          node.type = 'STRING'
-          node.val = val.slice(1, val.length - 1)
+          node.type = "STRING";
+          node.val = val.slice(1, val.length - 1);
         } else if (val.startsWith("'") && val.endsWith("'")) {
-          node.type = 'CHAR'
-          node.val = val.slice(1, val.length - 1)
+          node.type = "CHAR";
+          node.val = val.slice(1, val.length - 1);
 
-          if (node.val.length > 1) throw new AnalysisError()
+          if (node.val.length > 1) throw new AnalysisError();
         } else {
-          node.type = 'SYMBOL'
+          node.type = "SYMBOL";
         }
       }
     }
   }
 
   for (const root of roots) {
-    _analysis(root)
+    _analysis(root);
   }
 
   return roots;
 }
 
 function interpreter(roots: TreeNode[]) {
-  const env = new Env();
+  let env = new Env();
   const runtimeStack: TreeNode[] = [];
   const operandStack: TreeNode[] = [];
 
@@ -431,14 +440,46 @@ function interpreter(roots: TreeNode[]) {
           const op = operandStack.pop() as TreeNode;
 
           if (op.type === "LAMBDA") {
-          } else {
-            op.type as NTypeOperator
+            const argsCount = (curr.bundle! as TreeNode).parent!.val - 1;
+            const paramsCount = op.val;
 
-            switch(op.val as Operators) {
+            if (argsCount === paramsCount) {
+              const paramsNode = op.children[0];
+
+              for (const child of paramsNode.children) {
+                if (child.type !== "SYMBOL") throw new InterpreterError();
+              }
+
+              runtimeStack.splice(
+                -argsCount,
+                0,
+                new TreeNode("PRIMITIVE").withBundle(op)
+              );
+            } else {
+              throw new InterpreterError();
+            }
+          } else {
+            op.type as NTypeOperator;
+
+            const argsCount = op.parent!.val - 1;
+
+            switch (op.val as Operators) {
               case Operators.OP_ADD:
-                const argsCount = op.parent!.val
-                runtimeStack.splice(-argsCount, 0, new TreeNode("PRIMITIVE", ).withBundle(op))
-                break
+                runtimeStack.splice(
+                  -argsCount,
+                  0,
+                  new TreeNode("PRIMITIVE").withBundle(op)
+                );
+                break;
+              case Operators.OP_LAMBDA:
+                if (argsCount !== 2) throw new InterpreterError("lambda");
+
+                const args = runtimeStack.splice(-argsCount);
+                operandStack.push(
+                  new TreeNode("LAMBDA", args[0].val)
+                    .addChildren(args)
+                    .withBundle(env)
+                );
             }
           }
         } else {
@@ -458,44 +499,64 @@ function interpreter(roots: TreeNode[]) {
           }
 
           operandStack.push(listNode);
-        } else if (op.type === 'OPERATOR') {
-          switch(op.val as Operators) {
+        } else if (op.type === "OPERATOR") {
+          switch (op.val as Operators) {
             case Operators.OP_ADD:
-              const argsCount = op.parent!.val
-              let sum = 0
+              const argsCount = op.parent!.val;
+              let sum = 0;
 
               for (const arg of operandStack.splice(-argsCount)) {
-                if (arg.type !== 'NUMBER') {
-                  throw new InterpreterError()
+                if (arg.type !== "NUMBER") {
+                  throw new InterpreterError();
                 } else {
-                  sum += arg.val
+                  sum += arg.val;
                 }
               }
 
-              operandStack.push(new TreeNode('NUMBER', sum))
-              break
+              operandStack.push(new TreeNode("NUMBER", sum));
+              break;
           }
-        } else if (op.type === 'RETURN') {
+        } else if (op.type === "LAMBDA") {
+          const argsCount = op.val;
+          const [paramsNode, ...exprNodes] = op.children;
+          const _env = op.bundle as Env;
+          const env0 = _env.extend();
 
+          const args = operandStack.splice(-argsCount).reverse();
+          const params = paramsNode.children;
+
+          for (let i = 0; i < args.length; i++) {
+            env0.set(params[i].val, args[i]);
+          }
+
+          runtimeStack.push(
+            new TreeNode("RETURN", exprNodes.length).withBundle(env)
+          );
+
+          env = env0;
+
+          for (const expr of exprNodes.reverse()) {
+            runtimeStack.push(expr);
+          }
         } else {
           throw new InterpreterError(`not implemented ${curr.type}`);
         }
+      } else if (curr.type === "RETURN") {
+        const resultCount = curr.val;
+
+        env = curr.bundle as Env;
+        operandStack.splice(-resultCount, resultCount - 1);
       } else if (curr.type === "EXPR") {
         const opNode = curr.children[0];
 
-        // 倒序取值，不含 children[0]
-        for (let i = -1; i > -curr.children.length; i--) {
-          runtimeStack.push(curr.children[curr.children.length + i]);
+        for (let i = 1; i < curr.children.length; i++) {
+          runtimeStack.push(curr.children[i]);
         }
 
-        runtimeStack.push(
-          new TreeNode("EVAL", curr.children.length - 1).withBundle(curr)
-        );
+        runtimeStack.push(new TreeNode("EVAL").withBundle(curr));
         runtimeStack.push(opNode);
       } else if (curr.type === "LIST") {
-        runtimeStack.push(
-          new TreeNode("PRIMITIVE", curr.children.length).withBundle(curr)
-        );
+        runtimeStack.push(new TreeNode("PRIMITIVE").withBundle(curr));
 
         for (const child of curr.children) {
           runtimeStack.push(child);
