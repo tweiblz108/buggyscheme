@@ -1,12 +1,24 @@
-const program = "(+ (+ 1 1) 1)";
+// car cdr cons cond eq
+// lambda def set! if apply let begin import export type exit
+// + - * / % > <
+// and or not
+// :number :string :char :bool :list :lambda :nil :type
+// #t #f #nil #lambda #args
+// 基本编程模型
+// if and xxxx or xxxx + xxxxx * xxxxxx lambda default with begin, [Node, Node] eval, (- x)
+// no quote, no atom
+// add length, overload car cdr cons for string, char type, single quote 'c' "c"
+// (export (a b add cc dd))
+// (export a a)
+// (import '' fp) => fp/add
+import { readFileSync } from "fs";
 
-interface Pos {
-  row: number;
-  column: number;
-}
+const program = readFileSync("./program.ss", { encoding: "utf8" });
 
-function Pos(row: number, column: number): Pos {
-  return { row, column };
+type Pos = [number, number, string];
+
+function Pos(row: number, column: number, filename: string = "__main__"): Pos {
+  return [row, column, filename];
 }
 
 class Token {
@@ -21,57 +33,97 @@ class Token {
   toString() {
     const {
       str,
-      pos: { row, column },
+      pos: [row, column],
     } = this;
 
     return `${row}:${column} ${str}`;
   }
 }
+enum Operators {
+  OP_CAR= "car",
+  OP_CDR= "cdr",
+  OP_CONS= "cons",
+  OP_COND= "cond",
+  OP_IF= "if",
+  OP_EQ= "eq",
+  OP_LAMBDA= "lambda",
+  OP_DEF= "def",
+  OP_SET= "set!",
+  OP_APPLY= "apply",
+  OP_LET= "let",
+  OP_BEGIN= "begin",
+  OP_IMPORT= "import",
+  OP_EXPORT= "export",
+  OP_TYPE= "type",
+  OP_EXIT= "exit",
+  OP_ADD= "+",
+  OP_SUB= "-",
+  OP_MUL= "*",
+  OP_DIV= "/",
+  OP_MOD= "%",
+  OP_GT= ">",
+  OP_LT= "<",
+  OP_AND= "and",
+  OP_OR= "or",
+  OP_NOT= "not",
+};
 
-enum NodeType {
-  EXPR,
-  SYMBOL,
-  NUMBER,
-  OPERATOR,
-  LAMBDA,
-  LIST,
-  BOOL,
-  STRING,
-  TYPE,
+const ops = Object.values(Operators)
 
-  EVAL,
-  PACK,
-}
+const Constants = [
+  ":number",
+  ":string",
+  ":char",
+  ":bool",
+  ":list",
+  ":lambda",
+  ":nil",
+  ":type",
+  "#t",
+  "#f",
+  "#nil",
+  "#lambda",
+  "#args",
+];
 
-type NormalNode = TreeNode<Exclude<NodeType, StructureNode>>
-type StructureNode = NodeType.PACK | NodeType.EVAL
-type ContainerNode = NodeType.EXPR | NodeType.LIST
+type a = typeof Constants
 
-class TreeNode<T extends NodeType> {
+type NTypeContainer = "EXPR" | "LIST";
+type NTypeAtom = "SYMBOL" | "NUMBER" | "LAMBDA" | "BOOL" | "STRING" | "CHAR" | "TYPE";
+type NTypeOperator = "OPERATOR";
+type NTypeConstant = "CONSTANT";
+type NTypeInternal = "UNKNOWN" | "EVAL" | "PRIMITIVE" | "RETURN";
+type NType =
+  | NTypeContainer
+  | NTypeAtom
+  | NTypeOperator
+  | NTypeConstant
+  | NTypeInternal;
 
-  type: NodeType;
+class TreeNode {
   token?: Token;
-  val: string | number | boolean;
-  parent: TreeNode<ContainerNode> | null = null;
-  children: TreeNode<T>[];
+  parent: TreeNode | null = null;
+  children: TreeNode[] = [];
+  bundle?: TreeNode | Env;
 
-  constructor(type: T, val: any, token?: Token) {
-    this.type = type;
-    this.val = val;
-    this.children = [];
+  constructor(public type: NType, public val: any = '') {}
+
+  withToken(token: Token | undefined) {
     this.token = token;
+
+    return this;
   }
 
-  addChild(child: NormalNode) {
-    child.parent = <TreeNode<ContainerNode>> this;
+  withBundle(bundle: TreeNode) {
+    this.bundle = bundle;
+
+    return this;
+  }
+
+  addChild(child: TreeNode) {
+    child.parent = this;
 
     this.children.push(child);
-  }
-
-  addChildren(children: NormalNode[]) {
-    for (const child of children) {
-      this.addChild(child);
-    }
   }
 
   isRoot() {
@@ -79,126 +131,213 @@ class TreeNode<T extends NodeType> {
   }
 }
 
+class LexerError extends Error {}
+
 function lexer(program: string) {
-  const tokens = [];
+  const tokens: Token[] = [];
+
+  program = program.replace(/\r\n/gi, "\n");
 
   let row = 1;
+  let columnDec = 0;
   let a = 0;
   let b = 0;
 
-  const terminals = ["(", ")", "[", "]", " "];
-  const delimiters = ["(", ")", "[", "]"];
+  let currMode: "normal" | "string" | "char" | "comment" = "normal";
 
   while (b < program.length) {
     const c = program[b];
 
-    if (terminals.includes(c)) {
-      if (a !== b) {
-        const pos = Pos(row, a + 1);
+    if (currMode === "normal") {
+      if (["(", ")", "[", "]", " ", "\n", ";"].includes(c)) {
+        if (a !== b) {
+          const pos = Pos(row, a - columnDec + 1);
+          const token = new Token(program.substring(a, b), pos);
+
+          tokens.push(token);
+          a = b;
+        }
+
+        switch (c) {
+          case "(":
+          case ")":
+          case "[":
+          case "]":
+            const pos = Pos(row, a - columnDec + 1);
+            const token = new Token(c, pos);
+
+            tokens.push(token);
+
+            a++;
+            b++;
+            break;
+          case '"':
+          case "'":
+          case ";":
+            currMode = {
+              "'": "char",
+              '"': "string",
+              ";": "comment",
+            }[c] as "char" | "string" | "comment";
+            b++;
+            break;
+          case "\n":
+            a++;
+            b++;
+            row++;
+            columnDec = b;
+            break;
+          default:
+            a++;
+            b++;
+        }
+      } else {
+        b += 1;
+      }
+    } else if (currMode === "string") {
+      if (c === '"') {
+        let i = b - 1;
+        while (program[i] === "\\") {
+          i--;
+        }
+
+        const count = b - 1 - i;
+
+        if (count % 2 === 0) {
+          const pos = Pos(row, a - columnDec + 1);
+          const token = new Token(program.substring(a, b + 1), pos);
+
+          tokens.push(token);
+          b += 1;
+          a = b;
+          currMode = "normal";
+        } else {
+          b += 1;
+        }
+      } else if (c === "\n") {
+        throw new LexerError();
+      } else if (b + 1 === program.length) {
+        throw new LexerError();
+      } else {
+        b += 1;
+      }
+    } else if (currMode === "char") {
+      if (c === "'") {
+        const pos = Pos(row, a - columnDec + 1);
+        const token = new Token(program.substring(a, b + 1), pos);
+
+        tokens.push(token);
+        b += 1;
+        a = b;
+        currMode = "normal";
+      } else if (c === "\n") {
+        throw new LexerError();
+      } else if (b + 1 === program.length) {
+        throw new LexerError();
+      } else {
+        b += 1;
+      }
+    } else if (currMode === "comment") {
+      if (c === "\n" || b + 1 === program.length) {
+        const pos = Pos(row, a - columnDec + 1);
         const token = new Token(program.substring(a, b), pos);
 
         tokens.push(token);
+        a = b; // let normal mode handle \n
+        currMode = "normal";
+      } else {
+        b += 1;
       }
-
-      if (delimiters.includes(c)) {
-        const pos = Pos(row, b + 1);
-        const token = new Token(c, pos);
-
-        tokens.push(token);
-      }
-
-      b += 1;
-      a = b;
     } else {
-      b += 1;
+      const a = 1 + 2;
+      console.log(a);
     }
   }
 
-  return tokens;
+  // remove comments
+  return tokens.filter(({ str }) => !str.startsWith(";"));
 }
 
-enum Operator {
-  ADD = "+",
-  SUB = "-",
-  MUL = "*",
-  DIV = "/",
-  MOD = "%",
-}
-
-class ParseError {
-  token: Token;
-
+class ParseError extends Error {
   constructor(token: Token) {
-    this.token = token;
+    super(token.toString());
   }
 }
 
 const REGEXP_NUMBER = /^[\+\-]?\d*\.?\d+(?:[Ee][\+\-]?\d+)?$/;
 
 function parser(tokens: Token[]) {
-  const parents: TreeNode<any>[] = [];
+  const roots: TreeNode[] = [];
+  const parents: TreeNode[] = [];
 
   for (const [i, token] of tokens.entries()) {
     const { str } = token;
     const parent = parents.length > 0 ? parents[parents.length - 1] : null;
 
     if (str === "(") {
-      parents.push(new TreeNode(NodeType.EXPR, str, token));
+      parents.push(new TreeNode("EXPR", 0).withToken(token));
+
+      if (parent) parent.addChild(parents[parents.length - 1]);
+    } else if (str === "[") {
+      parents.push(new TreeNode("LIST", 0).withToken(token));
 
       if (parent) parent.addChild(parents[parents.length - 1]);
     } else if (str === ")") {
       const node = parents.pop();
 
-      if (node) {
-        if (node.isRoot()) {
-          if (i === tokens.length - 1) {
-            return node;
-          } else {
-            throw new ParseError(tokens[i + 1]);
-          }
-        }
-      } else {
+      if (!node || node.type !== "EXPR") {
         throw new ParseError(token);
+      } else {
+        if (node.isRoot()) {
+          roots.push(node);
+        } else {
+          // nothing
+        }
+      }
+    } else if (str === "]") {
+      const node = parents.pop();
+
+      if (!node || node.type !== "LIST") {
+        throw new ParseError(token);
+      } else {
+        if (node.isRoot()) {
+          roots.push(node);
+        } else {
+          // nothing
+        }
       }
     } else {
+      const node = new TreeNode("UNKNOWN", str).withToken(token);
       if (parent) {
-        if (REGEXP_NUMBER.test(str)) {
-          parent.addChild(new TreeNode(NodeType.NUMBER, str, token));
-        } else {
-          parent.addChild(new TreeNode(NodeType.SYMBOL, str, token));
-        }
+        parent.addChild(node);
       } else {
-        throw new ParseError(token);
+        roots.push(node);
       }
     }
   }
 
-  throw new ParseError(<Token>parents[parents.length - 1].token);
+  if (parents.length > 0) {
+    throw new ParseError(<Token>parents[parents.length - 1].token);
+  } else {
+    return roots;
+  }
 }
 
-class InterpreterError {
-  message: string;
-
+class InterpreterError extends Error {
   constructor(message: string = "") {
-    this.message = message;
-  }
-
-  toString() {
-    return this.message;
+    super(message);
   }
 }
-
-type EnvNode = Exclude<NodeType, StructureNode | ParentNode | NodeType.SYMBOL>
 
 class Env {
   parent: Env | null = null;
-  map: Map<string, TreeNode<EnvNode>> = new Map();
+  map: Map<string, TreeNode> = new Map();
 
-  set(name: string, value: TreeNode<EnvNode>) {
+  set(name: string, value: TreeNode) {
     this.map.set(name, value);
   }
 
-  lookup(name: string): TreeNode<EnvNode> | null {
+  lookup(name: string): TreeNode | null {
     const node = this.map.get(name);
 
     if (node) {
@@ -221,94 +360,184 @@ class Env {
   }
 }
 
-function baseEnv() {
-  const env = new Env();
+class AnalysisError extends Error {}
 
-  env.set("+", new TreeNode(NodeType.OPERATOR, Operator.ADD));
-  env.set("-", new TreeNode(NodeType.OPERATOR, Operator.SUB));
-  env.set("*", new TreeNode(NodeType.OPERATOR, Operator.MUL));
-  env.set("/", new TreeNode(NodeType.OPERATOR, Operator.DIV));
-  env.set("%", new TreeNode(NodeType.OPERATOR, Operator.MOD));
+function analysis(roots: TreeNode[]) {
+  function _analysis(root) {
+    const stack: TreeNode[] = []
 
-  return env;
-}
+    stack.push(root)
 
-function calculator(op: TreeNode<NodeType.OPERATOR>, operandStack: TreeNode<any>[]) {
-  if (op.val === Operator.ADD) {
-    const [a, b] = operandStack.splice(-2)
+    while(stack.length > 0) {
+      const node = stack.pop() as TreeNode
 
-    operandStack.push(new TreeNode(NodeType.NUMBER, ((<number> a.val) + (<number> b.val)).toString(), op.token))
-  }
-}
+      if (node.type === 'EXPR') {
+        node.val = node.children.length - 1 // argsCount
 
-function interpreter(root: TreeNode<ContainerNode>) {
-  const env = baseEnv();
-  const runtimeStack: TreeNode<any>[] = [];
-  const operandStack: TreeNode<EnvNode>[] = [];
+        for (const child of node.children) {
+          stack.push(child)
+        }
+      } else if ( node.type === 'LIST') {
+        node.val = node.children.length
 
-  runtimeStack.push(root);
-
-  while (runtimeStack.length > 0) {
-    const node = <TreeNode<any>>runtimeStack.pop();
-
-    if (node.type === NodeType.EVAL) {
-      if (operandStack.length) {
-        const op = <TreeNode<any>>operandStack.pop();
-
-        if (op.type === NodeType.OPERATOR) {
-          calculator(op, operandStack)
-        } else if (op.type === NodeType.LAMBDA) {
-          // not implemented
-        } else {
-          throw new InterpreterError();
+        for (const child of node.children) {
+          stack.push(child)
         }
       } else {
-        throw new InterpreterError();
-      }
-    } else if (node.type === NodeType.EXPR) {
-      runtimeStack.push(new TreeNode(NodeType.EVAL, ""));
+        const val = node.val as string
 
-      for (const child of node.children) {
-        runtimeStack.push(child);
-      }
-    } else if (node.type === NodeType.PACK) {
-      const length = <number>node.val;
-      const listNode = new TreeNode(NodeType.LIST, "", node.token);
+        if (Object.values(Constants).includes(val)) {
+          node.type = 'CONSTANT'
+        } else if (Object.values(Operators).includes(val as Operators)) {
+          node.type = 'OPERATOR'
+        } else if (REGEXP_NUMBER.test(val)) {
+          node.type = 'NUMBER'
+          node.val = parseFloat(val)
+        } else if (val.startsWith('"') && val.endsWith('"')) {
+          node.type = 'STRING'
+          node.val = val.slice(1, val.length - 1)
+        } else if (val.startsWith("'") && val.endsWith("'")) {
+          node.type = 'CHAR'
+          node.val = val.slice(1, val.length - 1)
 
-      for (const listItem of operandStack.splice(-length)) {
-        listNode.addChild(listItem);
+          if (node.val.length > 1) throw new AnalysisError()
+        } else {
+          node.type = 'SYMBOL'
+        }
       }
-
-      operandStack.push(listNode);
-    } else if (node.type === NodeType.LIST) {
-      runtimeStack.push(
-        new TreeNode(NodeType.PACK, node.children.length.toString(), node.token)
-      );
-
-      for (const child of node.children) {
-        runtimeStack.push(child);
-      }
-    } else if (node.type === NodeType.SYMBOL) {
-      const result = env.lookup(<string>node.val);
-
-      if (result) {
-        operandStack.push(result);
-      } else {
-        throw new InterpreterError(`undefined symbol ${node.val}`);
-      }
-    } else {
-      operandStack.push(node);
     }
   }
 
-  return <TreeNode<EnvNode>> operandStack.pop()
+  for (const root of roots) {
+    _analysis(root)
+  }
+
+  return roots;
+}
+
+function interpreter(roots: TreeNode[]) {
+  const env = new Env();
+  const runtimeStack: TreeNode[] = [];
+  const operandStack: TreeNode[] = [];
+
+  function _interpreter(root: TreeNode) {
+    runtimeStack.push(root);
+
+    while (runtimeStack.length > 0) {
+      const curr = runtimeStack.pop() as TreeNode;
+
+      if (curr.type === "EVAL") {
+        if (operandStack.length > 0) {
+          const op = operandStack.pop() as TreeNode;
+
+          if (op.type === "LAMBDA") {
+          } else {
+            op.type as NTypeOperator
+
+            switch(op.val as Operators) {
+              case Operators.OP_ADD:
+                const argsCount = op.parent!.val
+                runtimeStack.splice(-argsCount, 0, new TreeNode("PRIMITIVE", ).withBundle(op))
+                break
+            }
+          }
+        } else {
+          throw new InterpreterError();
+        }
+      } else if (curr.type === "PRIMITIVE") {
+        const op = curr.bundle as TreeNode;
+
+        if (op.type === "LIST") {
+          const length = <number>op.val;
+          const listNode = new TreeNode("LIST", curr.children.length).withToken(
+            op.token
+          );
+
+          for (const listItem of operandStack.splice(-length)) {
+            listNode.addChild(listItem);
+          }
+
+          operandStack.push(listNode);
+        } else if (op.type === 'OPERATOR') {
+          switch(op.val as Operators) {
+            case Operators.OP_ADD:
+              const argsCount = op.parent!.val
+              let sum = 0
+
+              for (const arg of operandStack.splice(-argsCount)) {
+                if (arg.type !== 'NUMBER') {
+                  throw new InterpreterError()
+                } else {
+                  sum += arg.val
+                }
+              }
+
+              operandStack.push(new TreeNode('NUMBER', sum))
+              break
+          }
+        } else if (op.type === 'RETURN') {
+
+        } else {
+          throw new InterpreterError(`not implemented ${curr.type}`);
+        }
+      } else if (curr.type === "EXPR") {
+        const opNode = curr.children[0];
+
+        // 倒序取值，不含 children[0]
+        for (let i = -1; i > -curr.children.length; i--) {
+          runtimeStack.push(curr.children[curr.children.length + i]);
+        }
+
+        runtimeStack.push(
+          new TreeNode("EVAL", curr.children.length - 1).withBundle(curr)
+        );
+        runtimeStack.push(opNode);
+      } else if (curr.type === "LIST") {
+        runtimeStack.push(
+          new TreeNode("PRIMITIVE", curr.children.length).withBundle(curr)
+        );
+
+        for (const child of curr.children) {
+          runtimeStack.push(child);
+        }
+      } else if (curr.type === "SYMBOL") {
+        const result = env.lookup(<string>curr.val);
+
+        if (result) {
+          operandStack.push(result);
+        } else {
+          throw new InterpreterError(`undefined symbol ${curr.val}`);
+        }
+      } else {
+        operandStack.push(curr);
+      }
+    }
+
+    return operandStack.pop();
+  }
+
+  let returnValue;
+  for (const root of roots) {
+    returnValue = _interpreter(root) as TreeNode;
+  }
+
+  return returnValue;
 }
 
 function main() {
   try {
-    console.log(interpreter(parser(lexer(program))));
+    console.log(interpreter(analysis(parser(lexer(program)))));
   } catch (e) {
-    console.log((e as ParseError).token.toString());
+    if (e instanceof ParseError) {
+      console.log(`ParserError: ${e}`);
+    } else if (e instanceof InterpreterError) {
+      console.log(`${e}`);
+      console.log(e.message);
+      console.log(e.name);
+      console.log(e.stack);
+    } else {
+      throw e;
+    }
   }
 }
 
