@@ -66,23 +66,22 @@ enum Operators {
   OP_AND = "and",
   OP_OR = "or",
   OP_NOT = "not",
+  OP_DISPLAY = "display",
 }
 
-const Constants = [
-  ":number",
-  ":string",
-  ":char",
-  ":bool",
-  ":list",
-  ":lambda",
-  ":nil",
-  ":type",
-  "#t",
-  "#f",
-  "#nil",
-  "#lambda",
-  "#args",
-];
+enum Constants {
+  K_TYPE_NUMBER = ":number",
+  K_TYPE_STRING = ":string",
+  K_TYPE_CHAR = ":char",
+  K_TYPE_BOOL = ":bool",
+  K_TYPE_LIST = ":list",
+  K_TYPE_LAMBDA = ":lambda",
+  K_TYPE_NIL = ":nil",
+  K_TYPE_TYPE = ":type",
+  K_BOOL_T = "#t",
+  K_BOOL_F = "#f",
+  K_NIL = "#nil",
+}
 
 type a = typeof Constants;
 
@@ -92,18 +91,13 @@ type NTypeAtom =
   | "NUMBER"
   | "LAMBDA"
   | "BOOL"
+  | "NIL"
   | "STRING"
   | "CHAR"
   | "TYPE";
 type NTypeOperator = "OPERATOR";
-type NTypeConstant = "CONSTANT";
 type NTypeInternal = "UNKNOWN" | "EVAL" | "PRIMITIVE" | "RETURN";
-type NType =
-  | NTypeContainer
-  | NTypeAtom
-  | NTypeOperator
-  | NTypeConstant
-  | NTypeInternal;
+type NType = NTypeContainer | NTypeAtom | NTypeOperator | NTypeInternal;
 
 class TreeNode {
   token?: Token;
@@ -253,12 +247,20 @@ function lexer(program: string) {
         b += 1;
       }
     } else if (currMode === "comment") {
-      if (c === "\n" || b + 1 === program.length) {
+      if (c === "\n") {
         const pos = Pos(row, a - columnDec + 1);
         const token = new Token(program.substring(a, b), pos);
 
         tokens.push(token);
         a = b; // let normal mode handle \n
+        currMode = "normal";
+      } else if (b + 1 === program.length) {
+        const pos = Pos(row, a - columnDec + 1);
+        const token = new Token(program.substring(a, b + 1), pos);
+
+        tokens.push(token);
+        b++;
+        a = b;
         currMode = "normal";
       } else {
         b += 1;
@@ -395,8 +397,17 @@ function analysis(roots: TreeNode[]) {
       } else {
         const val = node.val as string;
 
-        if (Object.values(Constants).includes(val)) {
-          node.type = "CONSTANT";
+        if (Object.values(Constants).includes(val as Constants)) {
+          switch (val as Constants) {
+            case Constants.K_BOOL_F:
+            case Constants.K_BOOL_T:
+              node.type = "BOOL";
+              break;
+            case Constants.K_NIL:
+              node.type = "NIL";
+            default:
+              node.type = "TYPE";
+          }
         } else if (Object.values(Operators).includes(val as Operators)) {
           node.type = "OPERATOR";
         } else if (REGEXP_NUMBER.test(val)) {
@@ -429,6 +440,10 @@ function interpreter(roots: TreeNode[]) {
   const runtimeStack: TreeNode[] = [];
   const operandStack: TreeNode[] = [];
 
+  const NODE_BOOL_T = new TreeNode("BOOL", Constants.K_BOOL_T)
+  const NODE_BOOL_F = new TreeNode("BOOL", Constants.K_BOOL_F)
+  const NODE_NIL = new TreeNode("NIL", Constants.K_NIL)
+
   function _interpreter(root: TreeNode) {
     runtimeStack.push(root);
 
@@ -459,11 +474,10 @@ function interpreter(roots: TreeNode[]) {
               throw new InterpreterError();
             }
           } else {
-            op.type as NTypeOperator;
-
             const argsCount = op.parent!.val - 1;
 
             switch (op.val as Operators) {
+              case Operators.OP_DISPLAY:
               case Operators.OP_ADD:
                 runtimeStack.splice(
                   -argsCount,
@@ -474,12 +488,31 @@ function interpreter(roots: TreeNode[]) {
               case Operators.OP_LAMBDA:
                 if (argsCount < 2) throw new InterpreterError("lambda");
 
-                const args = runtimeStack.splice(-argsCount);
+                const args = runtimeStack.splice(-argsCount).reverse();
                 operandStack.push(
                   new TreeNode("LAMBDA", args[0].val)
                     .addChildren(args)
                     .withBundle(env)
                 );
+                break;
+              case Operators.OP_IF:
+                {
+                  const args = runtimeStack.splice(-argsCount).reverse();
+                  runtimeStack.push(new TreeNode("PRIMITIVE").withBundle(op));
+                  runtimeStack.push(args[0]);
+                }
+                break;
+              case Operators.OP_GT:
+              case Operators.OP_LT:
+              case Operators.OP_EQ:
+                if (argsCount !== 2) throw new InterpreterError(op.val);
+
+                runtimeStack.splice(
+                  -argsCount,
+                  0,
+                  new TreeNode("PRIMITIVE").withBundle(op)
+                );
+                break;
             }
           }
         } else {
@@ -500,9 +533,10 @@ function interpreter(roots: TreeNode[]) {
 
           operandStack.push(listNode);
         } else if (op.type === "OPERATOR") {
+          const argsCount = op.parent!.val - 1;
+
           switch (op.val as Operators) {
             case Operators.OP_ADD:
-              const argsCount = op.parent!.val;
               let sum = 0;
 
               for (const arg of operandStack.splice(-argsCount)) {
@@ -515,6 +549,42 @@ function interpreter(roots: TreeNode[]) {
 
               operandStack.push(new TreeNode("NUMBER", sum));
               break;
+            case Operators.OP_IF:
+              const predict = operandStack.pop() as TreeNode;
+
+              if (predict.type !== "BOOL")
+                throw new InterpreterError("if need bool");
+
+              if (predict.val === Constants.K_BOOL_T) {
+                runtimeStack.push(op.parent!.children[2]);
+              } else {
+                runtimeStack.push(
+                  op.parent!.children[3]
+                    ? op.parent!.children[3]
+                    : new TreeNode("NIL", Constants.K_NIL)
+                );
+              }
+              break;
+            case Operators.OP_LT:
+              const [a, b] = operandStack.splice(-2);
+              if (a.type !== "NUMBER" || b.type !== "NUMBER")
+                throw new InterpreterError();
+
+              operandStack.push(
+                a.val < b.val
+                  ? new TreeNode("BOOL", Constants.K_BOOL_T)
+                  : new TreeNode("BOOL", Constants.K_BOOL_F)
+              );
+              break;
+            case Operators.OP_DISPLAY:
+              {
+                for (const arg of operandStack.splice(-argsCount)) {
+                  console.log(arg.val)
+                }
+
+                operandStack.push(NODE_NIL);
+              }
+              break;
           }
         } else if (op.type === "LAMBDA") {
           const argsCount = op.val;
@@ -525,13 +595,26 @@ function interpreter(roots: TreeNode[]) {
           const args = operandStack.splice(-argsCount).reverse();
           const params = paramsNode.children;
 
+          env0.set("#lambda", op);
+          env0.set("#args", new TreeNode("LIST").addChildren(args));
+
           for (let i = 0; i < args.length; i++) {
             env0.set(params[i].val, args[i]);
           }
 
-          runtimeStack.push(
-            new TreeNode("RETURN", exprNodes.length).withBundle(env)
-          );
+          const top = runtimeStack[runtimeStack.length - 1]
+
+          if (top && top.type === 'RETURN') {
+            for (let i = 0; i < top.val - 1; i++) {
+              operandStack.pop()
+            }
+
+            top.val = exprNodes.length
+          } else {
+            runtimeStack.push(
+              new TreeNode("RETURN", exprNodes.length).withBundle(env)
+            );
+          }
 
           env = env0;
 
@@ -549,8 +632,9 @@ function interpreter(roots: TreeNode[]) {
       } else if (curr.type === "EXPR") {
         const opNode = curr.children[0];
 
-        for (let i = 1; i < curr.children.length; i++) {
-          runtimeStack.push(curr.children[i]);
+        // reverse order, after evaluation
+        for (const child of curr.children.slice(1).reverse()) {
+          runtimeStack.push(child);
         }
 
         runtimeStack.push(new TreeNode("EVAL").withBundle(curr));
