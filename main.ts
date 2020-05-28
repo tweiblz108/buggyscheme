@@ -13,32 +13,34 @@
 // (import '' fp) => fp/add
 import { readFileSync } from "fs";
 
+// 获取操作数长度
+// 绑定环境 return
+// 绑定关联结点 lambda
+// val 的意义：操作符类型，布尔值
+
 const program = readFileSync("./program.ss", { encoding: "utf8" });
 
-type Pos = [number, number, string];
-
-function Pos(row: number, column: number, filename: string = "__main__"): Pos {
-  return [row, column, filename];
-}
-
 class Token {
-  str: string;
-  pos: Pos;
-
-  constructor(str: string, pos: Pos) {
-    this.str = str;
-    this.pos = pos;
-  }
+  constructor(
+    public readonly str: string,
+    private row: number,
+    private column: number,
+    private filename = '__main__'
+  ) {}
 
   toString() {
     const {
       str,
-      pos: [row, column],
+      row,
+      column,
+      filename
     } = this;
 
-    return `${row}:${column} ${str}`;
+    return `${filename}#${row}:${column} ${str}`;
   }
 }
+
+
 enum Operators {
   OP_CAR = "car",
   OP_CDR = "cdr",
@@ -67,6 +69,7 @@ enum Operators {
   OP_OR = "or",
   OP_NOT = "not",
   OP_DISPLAY = "display",
+  OP_LENGTH = "length",
 }
 
 enum Constants {
@@ -83,8 +86,6 @@ enum Constants {
   K_NIL = "#nil",
 }
 
-type a = typeof Constants;
-
 type NTypeContainer = "EXPR" | "LIST";
 type NTypeAtom =
   | "SYMBOL"
@@ -94,26 +95,34 @@ type NTypeAtom =
   | "NIL"
   | "STRING"
   | "CHAR"
-  | "TYPE";
-type NTypeOperator = "OPERATOR";
+  | "TYPE"
+  | "OPERATOR";
 type NTypeInternal = "UNKNOWN" | "EVAL" | "PRIMITIVE" | "RETURN";
-type NType = NTypeContainer | NTypeAtom | NTypeOperator | NTypeInternal;
+type NType = NTypeContainer | NTypeAtom | NTypeInternal;
 
 class TreeNode {
-  token?: Token;
   parent: TreeNode | null = null;
   children: TreeNode[] = [];
-  bundle?: TreeNode | Env;
 
-  constructor(public type: NType, public val: any = "") {}
+  bundle?: TreeNode;
+  token?: Token;
+  env?: Env;
 
-  withToken(token: Token | undefined) {
+  constructor(public type: NType, public val: string | number = "") {}
+
+  withToken(token: Token) {
     this.token = token;
 
     return this;
   }
 
-  withBundle(bundle: TreeNode | Env) {
+  withEnv(env: Env) {
+    this.env = env
+
+    return this
+  }
+
+  withBundle(bundle: TreeNode) {
     this.bundle = bundle;
 
     return this;
@@ -133,10 +142,6 @@ class TreeNode {
     }
 
     return this;
-  }
-
-  isRoot() {
-    return this.parent === null;
   }
 }
 
@@ -160,8 +165,7 @@ function lexer(program: string) {
     if (currMode === "normal") {
       if (["(", ")", "[", "]", " ", "\n", ";"].includes(c)) {
         if (a !== b) {
-          const pos = Pos(row, a - columnDec + 1);
-          const token = new Token(program.substring(a, b), pos);
+          const token = new Token(program.substring(a, b), row, a - columnDec + 1);
 
           tokens.push(token);
           a = b;
@@ -172,8 +176,7 @@ function lexer(program: string) {
           case ")":
           case "[":
           case "]":
-            const pos = Pos(row, a - columnDec + 1);
-            const token = new Token(c, pos);
+            const token = new Token(c, row, a - columnDec + 1);
 
             tokens.push(token);
 
@@ -213,8 +216,7 @@ function lexer(program: string) {
         const count = b - 1 - i;
 
         if (count % 2 === 0) {
-          const pos = Pos(row, a - columnDec + 1);
-          const token = new Token(program.substring(a, b + 1), pos);
+          const token = new Token(program.substring(a, b + 1), row, a - columnDec + 1);
 
           tokens.push(token);
           b += 1;
@@ -232,8 +234,7 @@ function lexer(program: string) {
       }
     } else if (currMode === "char") {
       if (c === "'") {
-        const pos = Pos(row, a - columnDec + 1);
-        const token = new Token(program.substring(a, b + 1), pos);
+        const token = new Token(program.substring(a, b + 1), row, a - columnDec + 1);
 
         tokens.push(token);
         b += 1;
@@ -248,15 +249,13 @@ function lexer(program: string) {
       }
     } else if (currMode === "comment") {
       if (c === "\n") {
-        const pos = Pos(row, a - columnDec + 1);
-        const token = new Token(program.substring(a, b), pos);
+        const token = new Token(program.substring(a, b), row, a - columnDec + 1);
 
         tokens.push(token);
         a = b; // let normal mode handle \n
         currMode = "normal";
       } else if (b + 1 === program.length) {
-        const pos = Pos(row, a - columnDec + 1);
-        const token = new Token(program.substring(a, b + 1), pos);
+        const token = new Token(program.substring(a, b + 1), row, a - columnDec + 1);
 
         tokens.push(token);
         b++;
@@ -305,7 +304,7 @@ function parser(tokens: Token[]) {
       if (!node || node.type !== "EXPR") {
         throw new ParseError(token);
       } else {
-        if (node.isRoot()) {
+        if (!node.parent) {
           roots.push(node);
         } else {
           // nothing
@@ -317,7 +316,7 @@ function parser(tokens: Token[]) {
       if (!node || node.type !== "LIST") {
         throw new ParseError(token);
       } else {
-        if (node.isRoot()) {
+        if (!node.parent) {
           roots.push(node);
         } else {
           // nothing
@@ -440,9 +439,9 @@ function interpreter(roots: TreeNode[]) {
   const runtimeStack: TreeNode[] = [];
   const operandStack: TreeNode[] = [];
 
-  const NODE_BOOL_T = new TreeNode("BOOL", Constants.K_BOOL_T)
-  const NODE_BOOL_F = new TreeNode("BOOL", Constants.K_BOOL_F)
-  const NODE_NIL = new TreeNode("NIL", Constants.K_NIL)
+  const NODE_BOOL_T = new TreeNode("BOOL", Constants.K_BOOL_T);
+  const NODE_BOOL_F = new TreeNode("BOOL", Constants.K_BOOL_F);
+  const NODE_NIL = new TreeNode("NIL", Constants.K_NIL);
 
   function _interpreter(root: TreeNode) {
     runtimeStack.push(root);
@@ -455,11 +454,11 @@ function interpreter(roots: TreeNode[]) {
           const op = operandStack.pop() as TreeNode;
 
           if (op.type === "LAMBDA") {
-            const argsCount = (curr.bundle as TreeNode).val - 1;
+            const argsCount = op.bundle!.parent!.val as number - 1;
             const paramsCount = op.val;
 
             if (argsCount === paramsCount) {
-              const paramsNode = op.children[0];
+              const paramsNode = op.bundle!.parent!.children[1];
 
               for (const child of paramsNode.children) {
                 if (child.type !== "SYMBOL") throw new InterpreterError();
@@ -474,7 +473,7 @@ function interpreter(roots: TreeNode[]) {
               throw new InterpreterError();
             }
           } else {
-            const argsCount = op.parent!.val - 1;
+            const argsCount = op.parent!.val as number - 1;
 
             switch (op.val as Operators) {
               case Operators.OP_DISPLAY:
@@ -488,11 +487,9 @@ function interpreter(roots: TreeNode[]) {
               case Operators.OP_LAMBDA:
                 if (argsCount < 2) throw new InterpreterError("lambda");
 
-                const args = runtimeStack.splice(-argsCount).reverse();
+                runtimeStack.splice(-argsCount);
                 operandStack.push(
-                  new TreeNode("LAMBDA", args[0].val)
-                    .addChildren(args)
-                    .withBundle(env)
+                  new TreeNode("LAMBDA", op.parent!.children[1].val).withEnv(env).withBundle(op)
                 );
                 break;
               case Operators.OP_IF:
@@ -505,7 +502,7 @@ function interpreter(roots: TreeNode[]) {
               case Operators.OP_GT:
               case Operators.OP_LT:
               case Operators.OP_EQ:
-                if (argsCount !== 2) throw new InterpreterError(op.val);
+                if (argsCount !== 2) throw new InterpreterError();
 
                 runtimeStack.splice(
                   -argsCount,
@@ -522,18 +519,12 @@ function interpreter(roots: TreeNode[]) {
         const op = curr.bundle as TreeNode;
 
         if (op.type === "LIST") {
-          const length = <number>op.val;
-          const listNode = new TreeNode("LIST", curr.children.length).withToken(
-            op.token
-          );
+          const length = op.val as number;
+          const listNode = new TreeNode("LIST").withToken( op.token as Token );
 
-          for (const listItem of operandStack.splice(-length)) {
-            listNode.addChild(listItem);
-          }
-
-          operandStack.push(listNode);
+          operandStack.push(listNode.addChildren(operandStack.splice(-length)));
         } else if (op.type === "OPERATOR") {
-          const argsCount = op.parent!.val - 1;
+          const argsCount = op.bundle!.parent!.val as number - 1;
 
           switch (op.val as Operators) {
             case Operators.OP_ADD:
@@ -543,7 +534,7 @@ function interpreter(roots: TreeNode[]) {
                 if (arg.type !== "NUMBER") {
                   throw new InterpreterError();
                 } else {
-                  sum += arg.val;
+                  sum += arg.val as number;
                 }
               }
 
@@ -579,7 +570,7 @@ function interpreter(roots: TreeNode[]) {
             case Operators.OP_DISPLAY:
               {
                 for (const arg of operandStack.splice(-argsCount)) {
-                  console.log(arg.val)
+                  console.log(arg.val);
                 }
 
                 operandStack.push(NODE_NIL);
@@ -587,9 +578,9 @@ function interpreter(roots: TreeNode[]) {
               break;
           }
         } else if (op.type === "LAMBDA") {
-          const argsCount = op.val;
-          const [paramsNode, ...exprNodes] = op.children;
-          const _env = op.bundle as Env;
+          const argsCount = op.val as number;
+          const [paramsNode, ...exprNodes] = op.bundle!.parent!.children.slice(1);
+          const _env = op.env as Env;
           const env0 = _env.extend();
 
           const args = operandStack.splice(-argsCount).reverse();
@@ -599,20 +590,21 @@ function interpreter(roots: TreeNode[]) {
           env0.set("#args", new TreeNode("LIST").addChildren(args));
 
           for (let i = 0; i < args.length; i++) {
-            env0.set(params[i].val, args[i]);
+            env0.set(params[i].val as string, args[i]);
           }
 
-          const top = runtimeStack[runtimeStack.length - 1]
+          const top = runtimeStack[runtimeStack.length - 1];
 
+          // TCO
           if (top && top.type === 'RETURN') {
-            for (let i = 0; i < top.val - 1; i++) {
+            for (let i = 0; i < (top.val as number) - 1; i++) {
               operandStack.pop()
             }
 
             top.val = exprNodes.length
           } else {
             runtimeStack.push(
-              new TreeNode("RETURN", exprNodes.length).withBundle(env)
+              new TreeNode("RETURN", exprNodes.length).withEnv(env).withBundle(op)
             );
           }
 
@@ -625,9 +617,9 @@ function interpreter(roots: TreeNode[]) {
           throw new InterpreterError(`not implemented ${curr.type}`);
         }
       } else if (curr.type === "RETURN") {
-        const resultCount = curr.val;
+        const resultCount = curr.val as number;
 
-        env = curr.bundle as Env;
+        env = curr.env as Env;
         operandStack.splice(-resultCount, resultCount - 1);
       } else if (curr.type === "EXPR") {
         const opNode = curr.children[0];
