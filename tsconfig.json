@@ -1,8 +1,7 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "target": "ES2018",
-    "lib": ["ES2018", "DOM"],
+    "target": "ESNext",
     "outDir": "out",
     "sourceMap": true,
     "strictNullChecks": true

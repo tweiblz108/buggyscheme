@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+
 // car cdr cons cond eq
 // lambda def set! if apply let begin import export type exit
 // + - * / % > <
@@ -11,7 +13,6 @@
 // (export (a b add cc dd))
 // (export a a)
 // (import '' fp) => fp/add
-import { readFileSync } from "fs";
 
 // 获取操作数长度
 // 绑定环境 return
@@ -25,21 +26,15 @@ class Token {
     public readonly str: string,
     private row: number,
     private column: number,
-    private filename = '__main__'
+    private filename = "__main__"
   ) {}
 
   toString() {
-    const {
-      str,
-      row,
-      column,
-      filename
-    } = this;
+    const { str, row, column, filename } = this;
 
     return `${filename}#${row}:${column} ${str}`;
   }
 }
-
 
 enum Operators {
   OP_CAR = "car",
@@ -117,9 +112,9 @@ class TreeNode {
   }
 
   withEnv(env: Env) {
-    this.env = env
+    this.env = env;
 
-    return this
+    return this;
   }
 
   withBundle(bundle: TreeNode) {
@@ -165,7 +160,11 @@ function lexer(program: string) {
     if (currMode === "normal") {
       if (["(", ")", "[", "]", " ", "\n", ";"].includes(c)) {
         if (a !== b) {
-          const token = new Token(program.substring(a, b), row, a - columnDec + 1);
+          const token = new Token(
+            program.substring(a, b),
+            row,
+            a - columnDec + 1
+          );
 
           tokens.push(token);
           a = b;
@@ -216,7 +215,11 @@ function lexer(program: string) {
         const count = b - 1 - i;
 
         if (count % 2 === 0) {
-          const token = new Token(program.substring(a, b + 1), row, a - columnDec + 1);
+          const token = new Token(
+            program.substring(a, b + 1),
+            row,
+            a - columnDec + 1
+          );
 
           tokens.push(token);
           b += 1;
@@ -234,7 +237,11 @@ function lexer(program: string) {
       }
     } else if (currMode === "char") {
       if (c === "'") {
-        const token = new Token(program.substring(a, b + 1), row, a - columnDec + 1);
+        const token = new Token(
+          program.substring(a, b + 1),
+          row,
+          a - columnDec + 1
+        );
 
         tokens.push(token);
         b += 1;
@@ -249,13 +256,21 @@ function lexer(program: string) {
       }
     } else if (currMode === "comment") {
       if (c === "\n") {
-        const token = new Token(program.substring(a, b), row, a - columnDec + 1);
+        const token = new Token(
+          program.substring(a, b),
+          row,
+          a - columnDec + 1
+        );
 
         tokens.push(token);
         a = b; // let normal mode handle \n
         currMode = "normal";
       } else if (b + 1 === program.length) {
-        const token = new Token(program.substring(a, b + 1), row, a - columnDec + 1);
+        const token = new Token(
+          program.substring(a, b + 1),
+          row,
+          a - columnDec + 1
+        );
 
         tokens.push(token);
         b++;
@@ -286,7 +301,7 @@ function parser(tokens: Token[]) {
   const roots: TreeNode[] = [];
   const parents: TreeNode[] = [];
 
-  for (const [i, token] of tokens.entries()) {
+  for (const [, token] of tokens.entries()) {
     const { str } = token;
     const parent = parents.length > 0 ? parents[parents.length - 1] : null;
 
@@ -340,7 +355,7 @@ function parser(tokens: Token[]) {
 }
 
 class InterpreterError extends Error {
-  constructor(message: string = "") {
+  constructor(message = "") {
     super(message);
   }
 }
@@ -454,7 +469,7 @@ function interpreter(roots: TreeNode[]) {
           const op = operandStack.pop() as TreeNode;
 
           if (op.type === "LAMBDA") {
-            const argsCount = op.bundle!.parent!.val as number - 1;
+            const argsCount = (op.bundle!.parent!.val as number) - 1;
             const paramsCount = op.val;
 
             if (argsCount === paramsCount) {
@@ -473,7 +488,7 @@ function interpreter(roots: TreeNode[]) {
               throw new InterpreterError();
             }
           } else {
-            const argsCount = op.parent!.val as number - 1;
+            const argsCount = (op.parent!.val as number) - 1;
 
             switch (op.val as Operators) {
               case Operators.OP_DISPLAY:
@@ -489,7 +504,9 @@ function interpreter(roots: TreeNode[]) {
 
                 runtimeStack.splice(-argsCount);
                 operandStack.push(
-                  new TreeNode("LAMBDA", op.parent!.children[1].val).withEnv(env).withBundle(op)
+                  new TreeNode("LAMBDA", op.parent!.children[1].val)
+                    .withEnv(env)
+                    .withBundle(op)
                 );
                 break;
               case Operators.OP_IF:
@@ -520,11 +537,11 @@ function interpreter(roots: TreeNode[]) {
 
         if (op.type === "LIST") {
           const length = op.val as number;
-          const listNode = new TreeNode("LIST").withToken( op.token as Token );
+          const listNode = new TreeNode("LIST").withToken(op.token as Token);
 
           operandStack.push(listNode.addChildren(operandStack.splice(-length)));
         } else if (op.type === "OPERATOR") {
-          const argsCount = op.bundle!.parent!.val as number - 1;
+          const argsCount = (op.bundle!.parent!.val as number) - 1;
 
           switch (op.val as Operators) {
             case Operators.OP_ADD:
@@ -579,7 +596,9 @@ function interpreter(roots: TreeNode[]) {
           }
         } else if (op.type === "LAMBDA") {
           const argsCount = op.val as number;
-          const [paramsNode, ...exprNodes] = op.bundle!.parent!.children.slice(1);
+          const [paramsNode, ...exprNodes] = op.bundle!.parent!.children.slice(
+            1
+          );
           const _env = op.env as Env;
           const env0 = _env.extend();
 
@@ -596,15 +615,17 @@ function interpreter(roots: TreeNode[]) {
           const top = runtimeStack[runtimeStack.length - 1];
 
           // TCO
-          if (top && top.type === 'RETURN') {
+          if (top && top.type === "RETURN") {
             for (let i = 0; i < (top.val as number) - 1; i++) {
-              operandStack.pop()
+              operandStack.pop();
             }
 
-            top.val = exprNodes.length
+            top.val = exprNodes.length;
           } else {
             runtimeStack.push(
-              new TreeNode("RETURN", exprNodes.length).withEnv(env).withBundle(op)
+              new TreeNode("RETURN", exprNodes.length)
+                .withEnv(env)
+                .withBundle(op)
             );
           }
 
