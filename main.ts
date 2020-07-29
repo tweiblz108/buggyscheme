@@ -99,7 +99,7 @@ class TreeNode {
   parent: TreeNode | null = null;
   children: TreeNode[] = [];
 
-  otherNode?: TreeNode;
+  sourceNode?: TreeNode;
 
   constructor(
     public type: NType,
@@ -108,8 +108,8 @@ class TreeNode {
     public env?: Env
   ) {}
 
-  from(otherNode: TreeNode) {
-    this.otherNode = otherNode;
+  from(sourceNode: TreeNode) {
+    this.sourceNode = sourceNode;
 
     return this;
   }
@@ -460,11 +460,12 @@ function interpreter(roots: TreeNode[]) {
           const op = operandStack.pop() as TreeNode;
 
           if (op.type === "LAMBDA") {
-            const argsCount = (op.otherNode!.parent!.parent!.val as number) - 1;
+            const argsCount =
+              (op.sourceNode!.parent!.parent!.val as number) - 1;
             const paramsCount = op.val;
 
             if (argsCount === paramsCount) {
-              const paramsNode = op.otherNode!.parent!.children[1];
+              const paramsNode = op.sourceNode!.parent!.children[1];
 
               for (const child of paramsNode.children) {
                 if (child.type !== "SYMBOL") throw new InterpreterError();
@@ -527,7 +528,7 @@ function interpreter(roots: TreeNode[]) {
           throw new InterpreterError();
         }
       } else if (curr.type === "PRIMITIVE") {
-        const op = curr.otherNode as TreeNode;
+        const op = curr.sourceNode as TreeNode;
 
         if (op.type === "LIST") {
           const length = op.val as number;
@@ -593,7 +594,7 @@ function interpreter(roots: TreeNode[]) {
           const [
             paramsNode,
             ...exprNodes
-          ] = op.otherNode!.parent!.children.slice(1);
+          ] = op.sourceNode!.parent!.children.slice(1);
           const _env = op.env as Env;
           const env0 = _env.extend();
 
