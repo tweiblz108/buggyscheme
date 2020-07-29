@@ -100,22 +100,13 @@ class TreeNode {
   children: TreeNode[] = [];
 
   bundle?: TreeNode;
-  token?: Token;
-  env?: Env;
 
-  constructor(public type: NType, public val: string | number = "") {}
-
-  withToken(token: Token) {
-    this.token = token;
-
-    return this;
-  }
-
-  withEnv(env: Env) {
-    this.env = env;
-
-    return this;
-  }
+  constructor(
+    public type: NType,
+    public val: string | number = "",
+    public token?: Token,
+    public env?: Env
+  ) {}
 
   withBundle(bundle: TreeNode) {
     this.bundle = bundle;
@@ -306,11 +297,11 @@ function parser(tokens: Token[]) {
     const parent = parents.length > 0 ? parents[parents.length - 1] : null;
 
     if (str === "(") {
-      parents.push(new TreeNode("EXPR", 0).withToken(token));
+      parents.push(new TreeNode("EXPR", 0, token));
 
       if (parent) parent.addChild(parents[parents.length - 1]);
     } else if (str === "[") {
-      parents.push(new TreeNode("LIST", 0).withToken(token));
+      parents.push(new TreeNode("LIST", 0, token));
 
       if (parent) parent.addChild(parents[parents.length - 1]);
     } else if (str === ")") {
@@ -338,7 +329,7 @@ function parser(tokens: Token[]) {
         }
       }
     } else {
-      const node = new TreeNode("UNKNOWN", str).withToken(token);
+      const node = new TreeNode("UNKNOWN", str, token);
       if (parent) {
         parent.addChild(node);
       } else {
@@ -504,9 +495,12 @@ function interpreter(roots: TreeNode[]) {
 
                 runtimeStack.splice(-argsCount);
                 operandStack.push(
-                  new TreeNode("LAMBDA", op.parent!.children[1].val)
-                    .withEnv(env)
-                    .withBundle(op)
+                  new TreeNode(
+                    "LAMBDA",
+                    op.parent!.children[1].val,
+                    op.token,
+                    env
+                  ).withBundle(op)
                 );
                 break;
               case Operators.OP_IF:
@@ -537,7 +531,7 @@ function interpreter(roots: TreeNode[]) {
 
         if (op.type === "LIST") {
           const length = op.val as number;
-          const listNode = new TreeNode("LIST").withToken(op.token as Token);
+          const listNode = new TreeNode("LIST", 0, op.token);
 
           operandStack.push(listNode.addChildren(operandStack.splice(-length)));
         } else if (op.type === "OPERATOR") {
@@ -623,9 +617,12 @@ function interpreter(roots: TreeNode[]) {
             top.val = exprNodes.length;
           } else {
             runtimeStack.push(
-              new TreeNode("RETURN", exprNodes.length)
-                .withEnv(env)
-                .withBundle(op)
+              new TreeNode(
+                "RETURN",
+                exprNodes.length,
+                undefined,
+                env
+              ).withBundle(op)
             );
           }
 
