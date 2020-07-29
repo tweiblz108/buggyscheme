@@ -469,7 +469,7 @@ function interpreter(roots: TreeNode[]) {
           const op = operandStack.pop() as TreeNode;
 
           if (op.type === "LAMBDA") {
-            const argsCount = (op.bundle!.parent!.val as number) - 1;
+            const argsCount = (op.bundle!.parent!.parent!.val as number) - 1;
             const paramsCount = op.val;
 
             if (argsCount === paramsCount) {
@@ -541,7 +541,7 @@ function interpreter(roots: TreeNode[]) {
 
           operandStack.push(listNode.addChildren(operandStack.splice(-length)));
         } else if (op.type === "OPERATOR") {
-          const argsCount = (op.bundle!.parent!.val as number) - 1;
+          const argsCount = (op.parent!.val as number) - 1;
 
           switch (op.val as Operators) {
             case Operators.OP_ADD:
