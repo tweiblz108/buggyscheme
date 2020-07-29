@@ -99,7 +99,7 @@ class TreeNode {
   parent: TreeNode | null = null;
   children: TreeNode[] = [];
 
-  bundle?: TreeNode;
+  otherNode?: TreeNode;
 
   constructor(
     public type: NType,
@@ -108,8 +108,8 @@ class TreeNode {
     public env?: Env
   ) {}
 
-  withBundle(bundle: TreeNode) {
-    this.bundle = bundle;
+  from(otherNode: TreeNode) {
+    this.otherNode = otherNode;
 
     return this;
   }
@@ -460,11 +460,11 @@ function interpreter(roots: TreeNode[]) {
           const op = operandStack.pop() as TreeNode;
 
           if (op.type === "LAMBDA") {
-            const argsCount = (op.bundle!.parent!.parent!.val as number) - 1;
+            const argsCount = (op.otherNode!.parent!.parent!.val as number) - 1;
             const paramsCount = op.val;
 
             if (argsCount === paramsCount) {
-              const paramsNode = op.bundle!.parent!.children[1];
+              const paramsNode = op.otherNode!.parent!.children[1];
 
               for (const child of paramsNode.children) {
                 if (child.type !== "SYMBOL") throw new InterpreterError();
@@ -473,7 +473,7 @@ function interpreter(roots: TreeNode[]) {
               runtimeStack.splice(
                 -argsCount,
                 0,
-                new TreeNode("PRIMITIVE").withBundle(op)
+                new TreeNode("PRIMITIVE").from(op)
               );
             } else {
               throw new InterpreterError();
@@ -487,7 +487,7 @@ function interpreter(roots: TreeNode[]) {
                 runtimeStack.splice(
                   -argsCount,
                   0,
-                  new TreeNode("PRIMITIVE").withBundle(op)
+                  new TreeNode("PRIMITIVE").from(op)
                 );
                 break;
               case Operators.OP_LAMBDA:
@@ -500,13 +500,13 @@ function interpreter(roots: TreeNode[]) {
                     op.parent!.children[1].val,
                     op.token,
                     env
-                  ).withBundle(op)
+                  ).from(op)
                 );
                 break;
               case Operators.OP_IF:
                 {
                   const args = runtimeStack.splice(-argsCount).reverse();
-                  runtimeStack.push(new TreeNode("PRIMITIVE").withBundle(op));
+                  runtimeStack.push(new TreeNode("PRIMITIVE").from(op));
                   runtimeStack.push(args[0]);
                 }
                 break;
@@ -518,7 +518,7 @@ function interpreter(roots: TreeNode[]) {
                 runtimeStack.splice(
                   -argsCount,
                   0,
-                  new TreeNode("PRIMITIVE").withBundle(op)
+                  new TreeNode("PRIMITIVE").from(op)
                 );
                 break;
             }
@@ -527,7 +527,7 @@ function interpreter(roots: TreeNode[]) {
           throw new InterpreterError();
         }
       } else if (curr.type === "PRIMITIVE") {
-        const op = curr.bundle as TreeNode;
+        const op = curr.otherNode as TreeNode;
 
         if (op.type === "LIST") {
           const length = op.val as number;
@@ -590,9 +590,10 @@ function interpreter(roots: TreeNode[]) {
           }
         } else if (op.type === "LAMBDA") {
           const argsCount = op.val as number;
-          const [paramsNode, ...exprNodes] = op.bundle!.parent!.children.slice(
-            1
-          );
+          const [
+            paramsNode,
+            ...exprNodes
+          ] = op.otherNode!.parent!.children.slice(1);
           const _env = op.env as Env;
           const env0 = _env.extend();
 
@@ -617,12 +618,7 @@ function interpreter(roots: TreeNode[]) {
             top.val = exprNodes.length;
           } else {
             runtimeStack.push(
-              new TreeNode(
-                "RETURN",
-                exprNodes.length,
-                undefined,
-                env
-              ).withBundle(op)
+              new TreeNode("RETURN", exprNodes.length, undefined, env).from(op)
             );
           }
 
@@ -647,10 +643,10 @@ function interpreter(roots: TreeNode[]) {
           runtimeStack.push(child);
         }
 
-        runtimeStack.push(new TreeNode("EVAL").withBundle(curr));
+        runtimeStack.push(new TreeNode("EVAL").from(curr));
         runtimeStack.push(opNode);
       } else if (curr.type === "LIST") {
-        runtimeStack.push(new TreeNode("PRIMITIVE").withBundle(curr));
+        runtimeStack.push(new TreeNode("PRIMITIVE").from(curr));
 
         for (const child of curr.children) {
           runtimeStack.push(child);
