@@ -2,9 +2,14 @@
   "name": "buggyscheme",
   "version": "1.0.0",
   "description": "",
-  "main": "main.ts",
+  "main": "index.ts",
+  "bin": {
+    "buggyscheme": "./out/index.js",
+    "scheme": "./out/index.js"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "tsc --build"
   },
   "keywords": [],
   "author": "",
