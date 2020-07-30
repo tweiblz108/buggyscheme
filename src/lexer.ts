@@ -144,6 +144,10 @@ export function lexer(program: string) {
     }
   }
 
+  if (a !== b) {
+    tokens.push(new Token(program.substring(a, b), row, a - columnDec + 1));
+  }
+
   // remove comments
   return tokens.filter(({ str }) => !str.startsWith(";"));
 }

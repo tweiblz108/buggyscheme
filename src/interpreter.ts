@@ -99,7 +99,9 @@ export function interpreter(roots: TreeNode[]): TreeNode {
           const length = op.val;
           const listNode = new TreeNode("LIST", 0, op.token);
 
-          operandStack.push(listNode.addChildren(operandStack.splice(-length)));
+          operandStack.push(
+            listNode.addChildren(operandStack.splice(-length).reverse())
+          );
         } else if (is(op, "OPERATOR")) {
           const argsCount = (op.parent as TreeNode<"EXPR">).val - 1;
 

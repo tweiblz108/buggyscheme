@@ -4,7 +4,8 @@
     "target": "ES2019",
     "outDir": "out",
     "sourceMap": true,
-    "strictNullChecks": true
+    "strictNullChecks": true,
+    "declaration": true
   },
-  "exclude": ["node_modules", "**/node_modules/*"]
+  "exclude": ["node_modules", "**/node_modules/*", "out"]
 }
