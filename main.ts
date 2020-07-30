@@ -574,12 +574,14 @@ function interpreter(roots: TreeNode[]) {
               if (!is(predict, "BOOL"))
                 throw new InterpreterError("if 需要 BOOL 类型的操作数");
 
+              const parent = op.parent as TreeNode<"EXPR">;
+
               if (predict.val === K_BOOL.T) {
-                runtimeStack.push(op.parent!.children[2]);
+                runtimeStack.push(parent.children[2]);
               } else {
                 runtimeStack.push(
-                  op.parent!.children[3]
-                    ? op.parent!.children[3]
+                  parent.children[3]
+                    ? parent.children[3]
                     : new TreeNode("NIL", K_NIL)
                 );
               }
