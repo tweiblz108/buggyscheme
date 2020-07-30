@@ -112,10 +112,12 @@ class TreeNode<T extends NType = NType> {
 
   constructor(
     public type: T,
-    public val: T extends "NUMBER" | "LIST" | "EXPR" | "RETURN" | "EVAL"
+    public val: T extends "NUMBER" | "LIST" | "EXPR" | "EVAL"
       ? number
       : T extends "LAMBDA"
-      ? [number, TreeNode<"EXPR">, TreeNode[]]
+      ? [number, TreeNode<"EXPR">, TreeNode[], Env]
+      : T extends "RETURN"
+      ? [number, Env]
       : T extends "PRIMITIVE"
       ? TreeNode
       : T extends "OPERATOR"
@@ -125,8 +127,7 @@ class TreeNode<T extends NType = NType> {
       : T extends "NIL"
       ? typeof K_NIL
       : string,
-    public token?: Token,
-    public env?: Env
+    public token?: Token
   ) {}
 
   addChild(child: TreeNode) {
@@ -520,9 +521,9 @@ function interpreter(roots: TreeNode[]) {
                       (op.parent?.parent?.val as number) - 1, // 实际参数的数目 ((lambda (n) n) 1)
                       paramsNode,
                       exprNodes,
+                      env,
                     ],
-                    op.token,
-                    env
+                    op.token
                   )
                 );
                 break;
@@ -608,39 +609,36 @@ function interpreter(roots: TreeNode[]) {
               break;
           }
         } else if (is(op, "LAMBDA")) {
-          const [argsCount, paramsNode, exprNodes] = op.val;
-          const _env = op.env as Env;
-          const env0 = _env.extend();
+          const [argsCount, paramsNode, exprNodes, closureEnv] = op.val;
+          const subEnv = closureEnv.extend();
 
           const args = operandStack.splice(-argsCount).reverse();
           const params = paramsNode.children;
 
-          env0.set("#lambda", op);
-          env0.set(
+          subEnv.set("#lambda", op);
+          subEnv.set(
             "#args",
             new TreeNode("LIST", args.length).addChildren(args)
           );
 
           for (let i = 0; i < args.length; i++) {
-            env0.set(params[i].val as string, args[i]);
+            subEnv.set(params[i].val as string, args[i]);
           }
 
-          const top = runtimeStack[runtimeStack.length - 1];
+          const topFrame = runtimeStack[runtimeStack.length - 1];
 
           // TCO
-          if (top && top.type === "RETURN") {
-            for (let i = 0; i < (top.val as number) - 1; i++) {
+          if (topFrame && topFrame.type === "RETURN") {
+            for (let i = 0; i < (topFrame.val as number) - 1; i++) {
               operandStack.pop();
             }
 
-            top.val = exprNodes.length;
+            topFrame.val = exprNodes.length;
           } else {
-            runtimeStack.push(
-              new TreeNode("RETURN", exprNodes.length, undefined, env)
-            );
+            runtimeStack.push(new TreeNode("RETURN", [exprNodes.length, env]));
           }
 
-          env = env0;
+          env = subEnv;
 
           for (const expr of exprNodes.reverse()) {
             runtimeStack.push(expr);
@@ -648,10 +646,11 @@ function interpreter(roots: TreeNode[]) {
         } else {
           throw new InterpreterError(`not implemented ${curr.type}`);
         }
-      } else if (curr.type === "RETURN") {
-        const resultCount = curr.val as number;
+      } else if (is(curr, "RETURN")) {
+        const [resultCount, closureEnv] = curr.val;
 
-        env = curr.env as Env;
+        env = closureEnv;
+
         operandStack.splice(-resultCount, resultCount - 1);
       } else if (curr.type === "EXPR") {
         const opNode = curr.children[0];
