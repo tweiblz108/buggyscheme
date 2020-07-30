@@ -290,8 +290,7 @@ function lexer(program: string) {
         b += 1;
       }
     } else {
-      const a = 1 + 2;
-      console.log(a);
+      throw new LexerError();
     }
   }
 
@@ -311,7 +310,7 @@ function parser(tokens: Token[]) {
   const roots: TreeNode[] = [];
   const parents: TreeNode[] = [];
 
-  for (const [, token] of tokens.entries()) {
+  for (const token of tokens) {
     const { str } = token;
     const parent = parents.length > 0 ? parents[parents.length - 1] : null;
 
