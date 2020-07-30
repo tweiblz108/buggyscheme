@@ -110,12 +110,14 @@ class TreeNode<T extends NType = NType> {
   parent?: TreeNode;
   children: TreeNode[] = [];
 
-  sourceNode?: TreeNode;
-
   constructor(
     public type: T,
-    public val: T extends "NUMBER" | "LIST" | "EXPR" | "LAMBDA" | "RETURN"
+    public val: T extends "NUMBER" | "LIST" | "EXPR" | "RETURN" | "EVAL"
       ? number
+      : T extends "LAMBDA"
+      ? [number, TreeNode<"EXPR">, TreeNode[]]
+      : T extends "PRIMITIVE"
+      ? TreeNode
       : T extends "OPERATOR"
       ? Operators
       : T extends "BOOL"
@@ -126,12 +128,6 @@ class TreeNode<T extends NType = NType> {
     public token?: Token,
     public env?: Env
   ) {}
-
-  from(sourceNode: TreeNode) {
-    this.sourceNode = sourceNode;
-
-    return this;
-  }
 
   addChild(child: TreeNode) {
     child.parent = this;
@@ -147,6 +143,10 @@ class TreeNode<T extends NType = NType> {
     }
 
     return this;
+  }
+
+  get length() {
+    return this.children.length;
   }
 }
 
@@ -479,27 +479,20 @@ function interpreter(roots: TreeNode[]) {
             | TreeNode<"OPERATOR">;
 
           if (is(op, "LAMBDA")) {
-            const argsCount =
-              (op.sourceNode!.parent!.parent!.val as number) - 1;
-            const paramsCount = op.val;
+            // 第一段处理，检查参数个数，符合则对实际参数进行求值
+            const [argsCount, paramsNode] = op.val;
 
-            if (argsCount === paramsCount) {
-              const paramsNode = op.sourceNode!.parent!.children[1];
-
+            if (argsCount === paramsNode.length) {
               for (const child of paramsNode.children) {
                 if (!is(child, "SYMBOL")) throw new InterpreterError();
               }
 
-              runtimeStack.splice(
-                -argsCount,
-                0,
-                new TreeNode("PRIMITIVE", "").from(op)
-              );
+              runtimeStack.splice(-argsCount, 0, new TreeNode("PRIMITIVE", op));
             } else {
               throw new InterpreterError();
             }
           } else {
-            const argsCount = (op.parent!.val as number) - 1;
+            const argsCount = curr.val;
 
             switch (op.val) {
               case Operators.OP_DISPLAY:
@@ -507,26 +500,36 @@ function interpreter(roots: TreeNode[]) {
                 runtimeStack.splice(
                   -argsCount,
                   0,
-                  new TreeNode("PRIMITIVE", "").from(op)
+                  new TreeNode("PRIMITIVE", op)
                 );
                 break;
               case Operators.OP_LAMBDA:
                 if (argsCount < 2) throw new InterpreterError("lambda");
 
-                runtimeStack.splice(-argsCount);
+                const [paramsNode, ...exprNodes] = runtimeStack
+                  .splice(-argsCount)
+                  .reverse(); // runtimeStack 中的参数是倒序
+
+                if (!is(paramsNode, "EXPR"))
+                  throw new InterpreterError("lambda");
+
                 operandStack.push(
                   new TreeNode(
                     "LAMBDA",
-                    (op.parent as TreeNode<"EXPR">).children[1].val as number,
+                    [
+                      (op.parent?.parent?.val as number) - 1, // 实际参数的数目 ((lambda (n) n) 1)
+                      paramsNode,
+                      exprNodes,
+                    ],
                     op.token,
                     env
-                  ).from(op)
+                  )
                 );
                 break;
               case Operators.OP_IF:
                 {
                   const args = runtimeStack.splice(-argsCount).reverse();
-                  runtimeStack.push(new TreeNode("PRIMITIVE", "").from(op));
+                  runtimeStack.push(new TreeNode("PRIMITIVE", op));
                   runtimeStack.push(args[0]);
                 }
                 break;
@@ -538,7 +541,7 @@ function interpreter(roots: TreeNode[]) {
                 runtimeStack.splice(
                   -argsCount,
                   0,
-                  new TreeNode("PRIMITIVE", "").from(op)
+                  new TreeNode("PRIMITIVE", op)
                 );
                 break;
             }
@@ -547,7 +550,7 @@ function interpreter(roots: TreeNode[]) {
           throw new InterpreterError();
         }
       } else if (is(curr, "PRIMITIVE")) {
-        const op = curr.sourceNode as TreeNode;
+        const op = curr.val;
 
         if (is(op, "LIST")) {
           const length = op.val;
@@ -555,7 +558,7 @@ function interpreter(roots: TreeNode[]) {
 
           operandStack.push(listNode.addChildren(operandStack.splice(-length)));
         } else if (is(op, "OPERATOR")) {
-          const argsCount = (op.parent!.val as number) - 1;
+          const argsCount = (op.parent as TreeNode<"EXPR">).val - 1;
 
           switch (op.val as Operators) {
             case Operators.OP_ADD:
@@ -604,12 +607,8 @@ function interpreter(roots: TreeNode[]) {
               }
               break;
           }
-        } else if (op.type === "LAMBDA") {
-          const argsCount = op.val as number;
-          const [
-            paramsNode,
-            ...exprNodes
-          ] = op.sourceNode!.parent!.children.slice(1);
+        } else if (is(op, "LAMBDA")) {
+          const [argsCount, paramsNode, exprNodes] = op.val;
           const _env = op.env as Env;
           const env0 = _env.extend();
 
@@ -637,7 +636,7 @@ function interpreter(roots: TreeNode[]) {
             top.val = exprNodes.length;
           } else {
             runtimeStack.push(
-              new TreeNode("RETURN", exprNodes.length, undefined, env).from(op)
+              new TreeNode("RETURN", exprNodes.length, undefined, env)
             );
           }
 
@@ -662,10 +661,10 @@ function interpreter(roots: TreeNode[]) {
           runtimeStack.push(child);
         }
 
-        runtimeStack.push(new TreeNode("EVAL", "").from(curr));
+        runtimeStack.push(new TreeNode("EVAL", curr.length - 1)); // 存储的是参数的长度
         runtimeStack.push(opNode);
       } else if (curr.type === "LIST") {
-        runtimeStack.push(new TreeNode("PRIMITIVE", "").from(curr));
+        runtimeStack.push(new TreeNode("PRIMITIVE", curr));
 
         for (const child of curr.children) {
           runtimeStack.push(child);

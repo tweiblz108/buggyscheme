@@ -1,13 +1,10 @@
 {
   "compilerOptions": {
     "module": "commonjs",
-    "target": "ESNext",
+    "target": "ES2019",
     "outDir": "out",
     "sourceMap": true,
     "strictNullChecks": true
   },
-  "exclude": [
-    "node_modules",
-    "**/node_modules/*"
-  ]
+  "exclude": ["node_modules", "**/node_modules/*"]
 }

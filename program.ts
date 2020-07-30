@@ -43,7 +43,7 @@
 
 // type size = 'a' | 'b'
 
-// type sizekey = keyof size
+// type size key = keyof size
 
 // type SizeMap = {
 //   [k in size]: number
