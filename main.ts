@@ -67,19 +67,23 @@ enum Operators {
   OP_LENGTH = "length",
 }
 
-enum Constants {
-  K_TYPE_NUMBER = ":number",
-  K_TYPE_STRING = ":string",
-  K_TYPE_CHAR = ":char",
-  K_TYPE_BOOL = ":bool",
-  K_TYPE_LIST = ":list",
-  K_TYPE_LAMBDA = ":lambda",
-  K_TYPE_NIL = ":nil",
-  K_TYPE_TYPE = ":type",
-  K_BOOL_T = "#t",
-  K_BOOL_F = "#f",
-  K_NIL = "#nil",
+enum K_TYPE {
+  NUMBER = ":number",
+  STRING = ":string",
+  CHAR = ":char",
+  BOOL = ":bool",
+  LIST = ":list",
+  NIL = "#nil",
+  LAMBDA = ":lambda",
+  TYPE = ":type",
 }
+
+enum K_BOOL {
+  T = "#t",
+  F = "#f",
+}
+
+const K_NIL = "#nil";
 
 type NTypeContainer = "EXPR" | "LIST";
 type NTypeAtom =
@@ -95,15 +99,30 @@ type NTypeAtom =
 type NTypeInternal = "UNKNOWN" | "EVAL" | "PRIMITIVE" | "RETURN";
 type NType = NTypeContainer | NTypeAtom | NTypeInternal;
 
-class TreeNode {
-  parent: TreeNode | null = null;
+function is<T extends NType, U extends TreeNode<T>>(
+  node: TreeNode<NType>,
+  type: T
+): node is U {
+  return node.type === type;
+}
+
+class TreeNode<T extends NType = NType> {
+  parent?: TreeNode;
   children: TreeNode[] = [];
 
   sourceNode?: TreeNode;
 
   constructor(
-    public type: NType,
-    public val: string | number = "",
+    public type: T,
+    public val: T extends "NUMBER" | "LIST" | "EXPR" | "LAMBDA" | "RETURN"
+      ? number
+      : T extends "OPERATOR"
+      ? Operators
+      : T extends "BOOL"
+      ? K_BOOL
+      : T extends "NIL"
+      ? typeof K_NIL
+      : string,
     public token?: Token,
     public env?: Env
   ) {}
@@ -393,7 +412,7 @@ function analysis(roots: TreeNode[]) {
     while (stack.length > 0) {
       const node = stack.pop() as TreeNode;
 
-      if (node.type === "EXPR" || node.type === "LIST") {
+      if (is(node, "EXPR") || is(node, "LIST")) {
         node.val = node.children.length;
 
         for (const child of node.children) {
@@ -402,30 +421,29 @@ function analysis(roots: TreeNode[]) {
       } else {
         const val = node.val as string;
 
-        if (Object.values(Constants).includes(val as Constants)) {
-          switch (val as Constants) {
-            case Constants.K_BOOL_F:
-            case Constants.K_BOOL_T:
-              node.type = "BOOL";
-              break;
-            case Constants.K_NIL:
-              node.type = "NIL";
-            default:
-              node.type = "TYPE";
-          }
+        if (Object.values(K_TYPE).includes(val as K_TYPE)) {
+          node.type = "TYPE";
+        } else if (Object.values(K_BOOL).includes(val as K_BOOL)) {
+          node.type = "BOOL";
         } else if (Object.values(Operators).includes(val as Operators)) {
           node.type = "OPERATOR";
+        } else if (val === K_NIL) {
+          node.type = "NIL";
         } else if (REGEXP_NUMBER.test(val)) {
           node.type = "NUMBER";
-          node.val = parseFloat(val);
+          (node as TreeNode<"NUMBER">).val = parseFloat(val);
         } else if (val.startsWith('"') && val.endsWith('"')) {
           node.type = "STRING";
-          node.val = val.slice(1, val.length - 1);
+          (node as TreeNode<"STRING">).val = val.slice(1, val.length - 1);
         } else if (val.startsWith("'") && val.endsWith("'")) {
           node.type = "CHAR";
-          node.val = val.slice(1, val.length - 1);
 
-          if (node.val.length > 1) throw new AnalysisError();
+          const _val = val.slice(1, val.length - 1);
+          if (_val.length === 1) {
+            (node as TreeNode<"CHAR">).val = _val;
+          } else {
+            throw new AnalysisError();
+          }
         } else {
           node.type = "SYMBOL";
         }
@@ -445,9 +463,9 @@ function interpreter(roots: TreeNode[]) {
   const runtimeStack: TreeNode[] = [];
   const operandStack: TreeNode[] = [];
 
-  const NODE_BOOL_T = new TreeNode("BOOL", Constants.K_BOOL_T);
-  const NODE_BOOL_F = new TreeNode("BOOL", Constants.K_BOOL_F);
-  const NODE_NIL = new TreeNode("NIL", Constants.K_NIL);
+  const NODE_BOOL_T = new TreeNode("BOOL", K_BOOL.T);
+  const NODE_BOOL_F = new TreeNode("BOOL", K_BOOL.F);
+  const NODE_NIL = new TreeNode("NIL", K_NIL);
 
   function _interpreter(root: TreeNode) {
     runtimeStack.push(root);
@@ -455,11 +473,13 @@ function interpreter(roots: TreeNode[]) {
     while (runtimeStack.length > 0) {
       const curr = runtimeStack.pop() as TreeNode;
 
-      if (curr.type === "EVAL") {
+      if (is(curr, "EVAL")) {
         if (operandStack.length > 0) {
-          const op = operandStack.pop() as TreeNode;
+          const op = operandStack.pop() as
+            | TreeNode<"LAMBDA">
+            | TreeNode<"OPERATOR">;
 
-          if (op.type === "LAMBDA") {
+          if (is(op, "LAMBDA")) {
             const argsCount =
               (op.sourceNode!.parent!.parent!.val as number) - 1;
             const paramsCount = op.val;
@@ -468,13 +488,13 @@ function interpreter(roots: TreeNode[]) {
               const paramsNode = op.sourceNode!.parent!.children[1];
 
               for (const child of paramsNode.children) {
-                if (child.type !== "SYMBOL") throw new InterpreterError();
+                if (!is(child, "SYMBOL")) throw new InterpreterError();
               }
 
               runtimeStack.splice(
                 -argsCount,
                 0,
-                new TreeNode("PRIMITIVE").from(op)
+                new TreeNode("PRIMITIVE", "").from(op)
               );
             } else {
               throw new InterpreterError();
@@ -482,13 +502,13 @@ function interpreter(roots: TreeNode[]) {
           } else {
             const argsCount = (op.parent!.val as number) - 1;
 
-            switch (op.val as Operators) {
+            switch (op.val) {
               case Operators.OP_DISPLAY:
               case Operators.OP_ADD:
                 runtimeStack.splice(
                   -argsCount,
                   0,
-                  new TreeNode("PRIMITIVE").from(op)
+                  new TreeNode("PRIMITIVE", "").from(op)
                 );
                 break;
               case Operators.OP_LAMBDA:
@@ -498,7 +518,7 @@ function interpreter(roots: TreeNode[]) {
                 operandStack.push(
                   new TreeNode(
                     "LAMBDA",
-                    op.parent!.children[1].val,
+                    (op.parent as TreeNode<"EXPR">).children[1].val as number,
                     op.token,
                     env
                   ).from(op)
@@ -507,7 +527,7 @@ function interpreter(roots: TreeNode[]) {
               case Operators.OP_IF:
                 {
                   const args = runtimeStack.splice(-argsCount).reverse();
-                  runtimeStack.push(new TreeNode("PRIMITIVE").from(op));
+                  runtimeStack.push(new TreeNode("PRIMITIVE", "").from(op));
                   runtimeStack.push(args[0]);
                 }
                 break;
@@ -519,7 +539,7 @@ function interpreter(roots: TreeNode[]) {
                 runtimeStack.splice(
                   -argsCount,
                   0,
-                  new TreeNode("PRIMITIVE").from(op)
+                  new TreeNode("PRIMITIVE", "").from(op)
                 );
                 break;
             }
@@ -527,15 +547,15 @@ function interpreter(roots: TreeNode[]) {
         } else {
           throw new InterpreterError();
         }
-      } else if (curr.type === "PRIMITIVE") {
+      } else if (is(curr, "PRIMITIVE")) {
         const op = curr.sourceNode as TreeNode;
 
-        if (op.type === "LIST") {
-          const length = op.val as number;
+        if (is(op, "LIST")) {
+          const length = op.val;
           const listNode = new TreeNode("LIST", 0, op.token);
 
           operandStack.push(listNode.addChildren(operandStack.splice(-length)));
-        } else if (op.type === "OPERATOR") {
+        } else if (is(op, "OPERATOR")) {
           const argsCount = (op.parent!.val as number) - 1;
 
           switch (op.val as Operators) {
@@ -543,10 +563,10 @@ function interpreter(roots: TreeNode[]) {
               let sum = 0;
 
               for (const arg of operandStack.splice(-argsCount)) {
-                if (arg.type !== "NUMBER") {
-                  throw new InterpreterError();
+                if (is(arg, "NUMBER")) {
+                  sum += arg.val;
                 } else {
-                  sum += arg.val as number;
+                  throw new InterpreterError();
                 }
               }
 
@@ -555,16 +575,16 @@ function interpreter(roots: TreeNode[]) {
             case Operators.OP_IF:
               const predict = operandStack.pop() as TreeNode;
 
-              if (predict.type !== "BOOL")
+              if (!is(predict, "BOOL"))
                 throw new InterpreterError("if need bool");
 
-              if (predict.val === Constants.K_BOOL_T) {
+              if (predict.val === K_BOOL.T) {
                 runtimeStack.push(op.parent!.children[2]);
               } else {
                 runtimeStack.push(
                   op.parent!.children[3]
                     ? op.parent!.children[3]
-                    : new TreeNode("NIL", Constants.K_NIL)
+                    : new TreeNode("NIL", K_NIL)
                 );
               }
               break;
@@ -573,11 +593,7 @@ function interpreter(roots: TreeNode[]) {
               if (a.type !== "NUMBER" || b.type !== "NUMBER")
                 throw new InterpreterError();
 
-              operandStack.push(
-                a.val < b.val
-                  ? new TreeNode("BOOL", Constants.K_BOOL_T)
-                  : new TreeNode("BOOL", Constants.K_BOOL_F)
-              );
+              operandStack.push(a.val < b.val ? NODE_BOOL_T : NODE_BOOL_F);
               break;
             case Operators.OP_DISPLAY:
               {
@@ -602,7 +618,10 @@ function interpreter(roots: TreeNode[]) {
           const params = paramsNode.children;
 
           env0.set("#lambda", op);
-          env0.set("#args", new TreeNode("LIST").addChildren(args));
+          env0.set(
+            "#args",
+            new TreeNode("LIST", args.length).addChildren(args)
+          );
 
           for (let i = 0; i < args.length; i++) {
             env0.set(params[i].val as string, args[i]);
@@ -644,10 +663,10 @@ function interpreter(roots: TreeNode[]) {
           runtimeStack.push(child);
         }
 
-        runtimeStack.push(new TreeNode("EVAL").from(curr));
+        runtimeStack.push(new TreeNode("EVAL", "").from(curr));
         runtimeStack.push(opNode);
       } else if (curr.type === "LIST") {
-        runtimeStack.push(new TreeNode("PRIMITIVE").from(curr));
+        runtimeStack.push(new TreeNode("PRIMITIVE", "").from(curr));
 
         for (const child of curr.children) {
           runtimeStack.push(child);
