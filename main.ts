@@ -96,7 +96,7 @@ type NTypeAtom =
   | "CHAR"
   | "TYPE"
   | "OPERATOR";
-type NTypeInternal = "UNKNOWN" | "EVAL" | "PRIMITIVE" | "RETURN";
+type NTypeInternal = "UNKNOWN" | "EVAL" | "FOLLOW" | "RETURN";
 type NType = NTypeContainer | NTypeAtom | NTypeInternal;
 
 function is<T extends NType, U extends TreeNode<T>>(
@@ -118,7 +118,7 @@ class TreeNode<T extends NType = NType> {
       ? [number, TreeNode<"EXPR">, TreeNode[], Env]
       : T extends "RETURN"
       ? [number, Env]
-      : T extends "PRIMITIVE"
+      : T extends "FOLLOW"
       ? TreeNode
       : T extends "OPERATOR"
       ? Operators
@@ -166,10 +166,10 @@ function lexer(program: string) {
   let currMode: "normal" | "string" | "char" | "comment" = "normal";
 
   while (b < program.length) {
-    const c = program[b];
+    const ch = program[b];
 
     if (currMode === "normal") {
-      if (["(", ")", "[", "]", " ", "\n", ";"].includes(c)) {
+      if (["(", ")", "[", "]", " ", "\n", ";"].includes(ch)) {
         if (a !== b) {
           const token = new Token(
             program.substring(a, b),
@@ -181,12 +181,12 @@ function lexer(program: string) {
           a = b;
         }
 
-        switch (c) {
+        switch (ch) {
           case "(":
           case ")":
           case "[":
           case "]":
-            const token = new Token(c, row, a - columnDec + 1);
+            const token = new Token(ch, row, a - columnDec + 1);
 
             tokens.push(token);
 
@@ -200,7 +200,7 @@ function lexer(program: string) {
               "'": "char",
               '"': "string",
               ";": "comment",
-            }[c] as "char" | "string" | "comment";
+            }[ch] as "char" | "string" | "comment";
             b++;
             break;
           case "\n":
@@ -217,7 +217,7 @@ function lexer(program: string) {
         b += 1;
       }
     } else if (currMode === "string") {
-      if (c === '"') {
+      if (ch === '"') {
         let i = b - 1;
         while (program[i] === "\\") {
           i--;
@@ -239,7 +239,7 @@ function lexer(program: string) {
         } else {
           b += 1;
         }
-      } else if (c === "\n") {
+      } else if (ch === "\n") {
         throw new LexerError();
       } else if (b + 1 === program.length) {
         throw new LexerError();
@@ -247,7 +247,7 @@ function lexer(program: string) {
         b += 1;
       }
     } else if (currMode === "char") {
-      if (c === "'") {
+      if (ch === "'") {
         const token = new Token(
           program.substring(a, b + 1),
           row,
@@ -258,7 +258,7 @@ function lexer(program: string) {
         b += 1;
         a = b;
         currMode = "normal";
-      } else if (c === "\n") {
+      } else if (ch === "\n") {
         throw new LexerError();
       } else if (b + 1 === program.length) {
         throw new LexerError();
@@ -266,7 +266,7 @@ function lexer(program: string) {
         b += 1;
       }
     } else if (currMode === "comment") {
-      if (c === "\n") {
+      if (ch === "\n") {
         const token = new Token(
           program.substring(a, b),
           row,
@@ -413,7 +413,7 @@ function analysis(roots: TreeNode[]) {
       const node = stack.pop() as TreeNode;
 
       if (is(node, "EXPR") || is(node, "LIST")) {
-        node.val = node.children.length;
+        node.val = node.length;
 
         for (const child of node.children) {
           stack.push(child);
@@ -438,9 +438,9 @@ function analysis(roots: TreeNode[]) {
         } else if (val.startsWith("'") && val.endsWith("'")) {
           node.type = "CHAR";
 
-          const _val = val.slice(1, val.length - 1);
-          if (_val.length === 1) {
-            (node as TreeNode<"CHAR">).val = _val;
+          const char = val.slice(1, val.length - 1);
+          if (char.length === 1) {
+            (node as TreeNode<"CHAR">).val = char;
           } else {
             throw new AnalysisError();
           }
@@ -475,9 +475,7 @@ function interpreter(roots: TreeNode[]) {
 
       if (is(curr, "EVAL")) {
         if (operandStack.length > 0) {
-          const op = operandStack.pop() as
-            | TreeNode<"LAMBDA">
-            | TreeNode<"OPERATOR">;
+          const op = operandStack.pop() as TreeNode;
 
           if (is(op, "LAMBDA")) {
             // 第一段处理，检查参数个数，符合则对实际参数进行求值
@@ -488,31 +486,28 @@ function interpreter(roots: TreeNode[]) {
                 if (!is(child, "SYMBOL")) throw new InterpreterError();
               }
 
-              runtimeStack.splice(-argsCount, 0, new TreeNode("PRIMITIVE", op));
+              runtimeStack.splice(-argsCount, 0, new TreeNode("FOLLOW", op));
             } else {
               throw new InterpreterError();
             }
-          } else {
+          } else if (is(op, "OPERATOR")) {
             const argsCount = curr.val;
 
             switch (op.val) {
               case Operators.OP_DISPLAY:
               case Operators.OP_ADD:
-                runtimeStack.splice(
-                  -argsCount,
-                  0,
-                  new TreeNode("PRIMITIVE", op)
-                );
+                runtimeStack.splice(-argsCount, 0, new TreeNode("FOLLOW", op));
                 break;
               case Operators.OP_LAMBDA:
-                if (argsCount < 2) throw new InterpreterError("lambda");
+                if (argsCount < 2)
+                  throw new InterpreterError("lambda 最少需要两个参数");
 
                 const [paramsNode, ...exprNodes] = runtimeStack
                   .splice(-argsCount)
                   .reverse(); // runtimeStack 中的参数是倒序
 
                 if (!is(paramsNode, "EXPR"))
-                  throw new InterpreterError("lambda");
+                  throw new InterpreterError("lambda 参数表有误");
 
                 operandStack.push(
                   new TreeNode(
@@ -530,7 +525,7 @@ function interpreter(roots: TreeNode[]) {
               case Operators.OP_IF:
                 {
                   const args = runtimeStack.splice(-argsCount).reverse();
-                  runtimeStack.push(new TreeNode("PRIMITIVE", op));
+                  runtimeStack.push(new TreeNode("FOLLOW", op));
                   runtimeStack.push(args[0]);
                 }
                 break;
@@ -539,18 +534,16 @@ function interpreter(roots: TreeNode[]) {
               case Operators.OP_EQ:
                 if (argsCount !== 2) throw new InterpreterError();
 
-                runtimeStack.splice(
-                  -argsCount,
-                  0,
-                  new TreeNode("PRIMITIVE", op)
-                );
+                runtimeStack.splice(-argsCount, 0, new TreeNode("FOLLOW", op));
                 break;
             }
+          } else {
+            throw new InterpreterError(`不能将此结点作为操作符`);
           }
         } else {
           throw new InterpreterError();
         }
-      } else if (is(curr, "PRIMITIVE")) {
+      } else if (is(curr, "FOLLOW")) {
         const op = curr.val;
 
         if (is(op, "LIST")) {
@@ -579,7 +572,7 @@ function interpreter(roots: TreeNode[]) {
               const predict = operandStack.pop() as TreeNode;
 
               if (!is(predict, "BOOL"))
-                throw new InterpreterError("if need bool");
+                throw new InterpreterError("if 需要 BOOL 类型的操作数");
 
               if (predict.val === K_BOOL.T) {
                 runtimeStack.push(op.parent!.children[2]);
@@ -593,7 +586,7 @@ function interpreter(roots: TreeNode[]) {
               break;
             case Operators.OP_LT:
               const [a, b] = operandStack.splice(-2);
-              if (a.type !== "NUMBER" || b.type !== "NUMBER")
+              if (!is(a, "NUMBER") || !is(b, "NUMBER"))
                 throw new InterpreterError();
 
               operandStack.push(a.val < b.val ? NODE_BOOL_T : NODE_BOOL_F);
@@ -625,15 +618,16 @@ function interpreter(roots: TreeNode[]) {
             subEnv.set(params[i].val as string, args[i]);
           }
 
-          const topFrame = runtimeStack[runtimeStack.length - 1];
+          const topNode = runtimeStack[runtimeStack.length - 1];
 
           // TCO
-          if (topFrame && topFrame.type === "RETURN") {
-            for (let i = 0; i < (topFrame.val as number) - 1; i++) {
+          if (topNode && is(topNode, "RETURN")) {
+            const [resultCount, returnEnv] = topNode.val;
+            for (let i = 0; i < resultCount - 1; i++) {
               operandStack.pop();
             }
 
-            topFrame.val = exprNodes.length;
+            topNode.val = [exprNodes.length, returnEnv];
           } else {
             runtimeStack.push(new TreeNode("RETURN", [exprNodes.length, env]));
           }
@@ -652,7 +646,7 @@ function interpreter(roots: TreeNode[]) {
         env = closureEnv;
 
         operandStack.splice(-resultCount, resultCount - 1);
-      } else if (curr.type === "EXPR") {
+      } else if (is(curr, "EXPR")) {
         const opNode = curr.children[0];
 
         // reverse order, after evaluation
@@ -662,14 +656,14 @@ function interpreter(roots: TreeNode[]) {
 
         runtimeStack.push(new TreeNode("EVAL", curr.length - 1)); // 存储的是参数的长度
         runtimeStack.push(opNode);
-      } else if (curr.type === "LIST") {
-        runtimeStack.push(new TreeNode("PRIMITIVE", curr));
+      } else if (is(curr, "LIST")) {
+        runtimeStack.push(new TreeNode("FOLLOW", curr));
 
         for (const child of curr.children) {
           runtimeStack.push(child);
         }
-      } else if (curr.type === "SYMBOL") {
-        const result = env.lookup(<string>curr.val);
+      } else if (is(curr, "SYMBOL")) {
+        const result = env.lookup(curr.val);
 
         if (result) {
           operandStack.push(result);
