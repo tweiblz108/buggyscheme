@@ -122,6 +122,8 @@ class TreeNode<T extends NType = NType> {
       ? TreeNode
       : T extends "OPERATOR"
       ? Operators
+      : T extends "TYPE"
+      ? K_TYPE
       : T extends "BOOL"
       ? K_BOOL
       : T extends "NIL"
