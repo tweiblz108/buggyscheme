@@ -1,5 +1,5 @@
 ((lambda (n) (if 
-  (< n 5000)
+  (< n 15000)
   (#lambda (+ n 1))
   (display (+ n n n)) 
 )) 1)

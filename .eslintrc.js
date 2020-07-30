@@ -1,7 +1,7 @@
 module.exports = {
   parser: "@typescript-eslint/parser",
   parserOptions: {
-    ecmaVersion: 2020,
+    ecmaVersion: 2019,
     sourceType: "module",
     impliedStrict: true,
   },
@@ -10,4 +10,7 @@ module.exports = {
     "prettier/@typescript-eslint",
     "plugin:prettier/recommended",
   ],
+  rules: {
+    "@typescript-eslint/explicit-module-boundary-types": "off",
+  },
 };
